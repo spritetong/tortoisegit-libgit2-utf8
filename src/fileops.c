@@ -53,7 +53,8 @@ int git_futils_creat_withpath(const char *path, const mode_t dirmode, const mode
 
 int git_futils_creat_locked(const char *path, const mode_t mode)
 {
-	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY | O_EXCL, mode);
+	/* For UTF-8. Changed by Sprite Tong, 12/6/2011. */
+	int fd = p_open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY | O_EXCL/*, mode*/);
 	return fd >= 0 ? fd : git__throw(GIT_EOSERR, "Failed to create locked file. Could not open %s", path);
 }
 
@@ -67,7 +68,7 @@ int git_futils_creat_locked_withpath(const char *path, const mode_t dirmode, con
 
 int git_futils_isdir(const char *path)
 {
-#ifdef GIT_WIN32
+#if 0 /*GIT_WIN32*/ /* For UTF-8. Changed by Sprite Tong, 12/6/2011. */
 	DWORD attr = GetFileAttributes(path);
 	if (attr == INVALID_FILE_ATTRIBUTES)
 		return GIT_ERROR;
