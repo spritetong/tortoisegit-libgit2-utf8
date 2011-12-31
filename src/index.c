@@ -315,6 +315,23 @@ static int index_entry_init(git_index_entry **entry_out, git_index *index, const
 	if ((error = git_blob_create_fromfile(&oid, INDEX_OWNER(index), rel_path)) < GIT_SUCCESS)
 		return git__rethrow(error, "Failed to initialize index entry");
 
+	/* Fix a bug: variable "st" is not initialized. Added by Sprite Tong, 12/31/2011. */
+	{
+		git_buf full_path = GIT_BUF_INIT;
+	    const char *workdir = git_repository_workdir(INDEX_OWNER(index));
+	    if (workdir == NULL)
+		    return git__throw(GIT_EBAREINDEX,
+			    "Failed to initialize entry. Cannot resolved workdir");
+	    git_buf_joinpath(&full_path, workdir, rel_path);
+	    if (p_lstat(full_path.ptr, &st) < 0)
+		{
+			git_buf_free(&full_path);
+		    return git__throw(GIT_ENOTFOUND,
+			    "Failed to initialize entry. '%s' cannot be opened", full_path);
+		}
+		git_buf_free(&full_path);
+	}
+
 	entry = git__calloc(1, sizeof(git_index_entry));
 	if (!entry)
 		return GIT_ENOMEM;
