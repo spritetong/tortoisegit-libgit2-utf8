@@ -4,6 +4,7 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
+#define __XUTF8_INIT__ /* For UTF-8. Added by Sprite Tong, 12/30/2011. */
 #include "posix.h"
 #include "path.h"
 #include "utf-conv.h"

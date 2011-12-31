@@ -7,6 +7,9 @@
 #ifndef INCLUDE_mingw_compat__
 #define INCLUDE_mingw_compat__
 
+/* For UTF-8. Added by Sprite Tong, 12/30/2011. */
+#include "../../../tgit/compat/win32_xutf8.h"
+
 #if defined(__MINGW32__)
 
 /* use a 64-bit file offset type */
