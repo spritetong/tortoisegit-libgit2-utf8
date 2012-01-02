@@ -91,6 +91,8 @@ Here are the bindings to libgit2 that are currently available:
 * libgit2net (.NET bindings, low level) <https://github.com/txdv/libgit2net>
 * parrot-libgit2 (Parrot Virtual Machine bindings) <https://github.com/letolabs/parrot-libgit2>
 * hgit2 (Haskell bindings) <https://github.com/norm2782/hgit2>
+* git-xs-pm (Perl bindings) <https://github.com/ingydotnet/git-xs-pm>
+* libgit2.vapi (Vala bindings) <https://github.com/apmasell/vapis/blob/master/libgit2.vapi>
 
 If you start another language binding to libgit2, please let us know so
 we can add it to the list.
