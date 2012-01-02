@@ -30,7 +30,11 @@ struct git_config_file {
 	int (*open)(struct git_config_file *);
 	int (*get)(struct git_config_file *, const char *key, const char **value);
 	int (*set)(struct git_config_file *, const char *key, const char *value);
+#ifdef __cplusplus
+	int (*config_delete)(struct git_config_file *, const char *key);
+#else
 	int (*delete)(struct git_config_file *, const char *key);
+#endif
 	int (*foreach)(struct git_config_file *, int (*fn)(const char *, const char *, void *), void *data);
 	void (*free)(struct git_config_file *);
 };
