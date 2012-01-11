@@ -105,8 +105,13 @@ extern void git__strtolower(char *str);
 extern int git__fnmatch(const char *pattern, const char *name, int flags);
 
 extern void git__tsort(void **dst, size_t size, int (*cmp)(const void *, const void *));
-extern void **git__bsearch(const void *key, void **base, size_t nmemb,
-	int (*compar)(const void *, const void *));
+
+extern int git__bsearch(
+	void **array,
+	size_t array_len,
+	const void *key,
+	int (*compare)(const void *, const void *),
+	size_t *position);
 
 extern int git__strcmp_cb(const void *a, const void *b);
 
@@ -133,5 +138,28 @@ typedef void (*git_refcount_freeptr)(void *r);
 
 #define GIT_REFCOUNT_OWNER(r) (((git_refcount *)(r))->owner)
 
+static signed char from_hex[] = {
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 00 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 10 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 20 */
+ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1, -1, -1, /* 30 */
+-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 40 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 50 */
+-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 60 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 70 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 80 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 90 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* a0 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* b0 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* c0 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* d0 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* e0 */
+-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* f0 */
+};
+
+GIT_INLINE(int) git__fromhex(char h)
+{
+	return from_hex[(unsigned char) h];
+}
 
 #endif /* INCLUDE_util_h__ */

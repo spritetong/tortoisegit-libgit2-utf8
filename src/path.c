@@ -181,8 +181,8 @@ int git_path_root(const char *path)
 
 int git_path_prettify(git_buf *path_out, const char *path, const char *base)
 {
-	char *result = NULL;
-	int   error = GIT_SUCCESS;
+	int  error = GIT_SUCCESS;
+	char buf[GIT_PATH_MAX];
 
 	git_buf_clear(path_out);
 
@@ -193,16 +193,10 @@ int git_path_prettify(git_buf *path_out, const char *path, const char *base)
 		path = path_out->ptr;
 	}
 
-	/* allow realpath to allocate the buffer */
-	if (path != NULL)
-		result = p_realpath(path, NULL);
-
-	if (result) {
-		error = git_buf_sets(path_out, result);
-		git__free(result);
-	} else {
+	if (path == NULL || p_realpath(path, buf) == NULL)
 		error = GIT_EOSERR;
-	}
+	else
+		error = git_buf_sets(path_out, buf);
 
 	return error;
 }
@@ -237,3 +231,77 @@ void git_path_string_to_dir(char* path, size_t size)
 	}
 }
 
+int git__percent_decode(git_buf *decoded_out, const char *input)
+{
+	int len, hi, lo, i, error = GIT_SUCCESS;
+	assert(decoded_out && input);
+
+	len = strlen(input);
+	git_buf_clear(decoded_out);
+
+	for(i = 0; i < len; i++)
+	{
+		char c = input[i];
+
+		if (c != '%')
+			goto append;
+
+		if (i >= len - 2)
+			goto append;
+
+		hi = git__fromhex(input[i + 1]);
+		lo = git__fromhex(input[i + 2]);
+
+		if (hi < 0 || lo < 0)
+			goto append;
+
+		c = (char)(hi << 4 | lo);
+		i += 2;
+
+append:
+		error = git_buf_putc(decoded_out, c);
+		if (error < GIT_SUCCESS)
+			return git__rethrow(error, "Failed to percent decode '%s'.", input);
+	}
+
+	return error;
+}
+
+int git_path_fromurl(git_buf *local_path_out, const char *file_url)
+{
+	int error = GIT_SUCCESS, offset = 0, len;
+
+	assert(local_path_out && file_url);
+
+	if (git__prefixcmp(file_url, "file://") != 0)
+		return git__throw(GIT_EINVALIDPATH,
+			"Parsing of '%s' failed. A file Uri is expected (ie. with 'file://' scheme).",
+			file_url);
+
+	offset += 7;
+	len = strlen(file_url);
+
+	if (offset < len && file_url[offset] == '/')
+		offset++;
+	else if (offset < len && git__prefixcmp(file_url + offset, "localhost/") == 0)
+		offset += 10;
+	else
+		return git__throw(GIT_EINVALIDPATH,
+			"Parsing of '%s' failed. A local file Uri is expected.", file_url);
+
+	if (offset >= len || file_url[offset] == '/')
+		return git__throw(GIT_EINVALIDPATH, 
+			"Parsing of '%s' failed. Invalid file Uri format.", file_url);
+
+#ifndef _MSC_VER
+	offset--;	/* A *nix absolute path starts with a forward slash */
+#endif
+
+	git_buf_clear(local_path_out);
+
+	error = git__percent_decode(local_path_out, file_url + offset);
+	if (error < GIT_SUCCESS)
+		return git__rethrow(error, "Parsing of '%s' failed.", file_url);
+
+	return error;
+}

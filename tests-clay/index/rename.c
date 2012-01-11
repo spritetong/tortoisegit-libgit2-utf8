@@ -1,16 +1,6 @@
 #include "clay_libgit2.h"
 #include "posix.h"
 
-static void file_create(const char *filename, const char *content)
-{
-	int fd;
-
-	fd = p_creat(filename, 0666);
-	cl_assert(fd != 0);
-	cl_git_pass(p_write(fd, content, strlen(content)));
-	cl_git_pass(p_close(fd));
-}
-
 void test_index_rename__single_file(void)
 {
 	git_repository *repo;
@@ -26,7 +16,7 @@ void test_index_rename__single_file(void)
 
 	cl_assert(git_index_entrycount(index) == 0);
 
-	file_create("./rename/lame.name.txt", "new_file\n");
+	cl_git_mkfile("./rename/lame.name.txt", "new_file\n");
 
 	/* This should add a new blob to the object database in 'd4/fa8600b4f37d7516bef4816ae2c64dbf029e3a' */
 	cl_git_pass(git_index_add(index, "lame.name.txt", 0));
