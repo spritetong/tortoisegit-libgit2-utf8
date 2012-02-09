@@ -157,13 +157,6 @@ static int pack_index_check(const char *path, struct git_pack_file *p)
 			git_futils_mmap_free(&p->index_map);
 			return git__throw(GIT_EOBJCORRUPTED, "Failed to check index. Wrong index size");
 		}
-
-		/* Make sure that off_t is big enough to access the whole pack...
-		 * Is this an issue in libgit2? It shouldn't. */
-		if (idx_size != min_size && (sizeof(off_t) <= 4)) {
-			git_futils_mmap_free(&p->index_map);
-			return git__throw(GIT_EOSERR, "Failed to check index. off_t not big enough to access the whole pack");
-		}
 	}
 
 	p->index_version = version;
@@ -607,7 +600,7 @@ int git_packfile_check(struct git_pack_file **pack_out, const char *path)
 	memcpy(p->pack_name, path, path_len);
 
 	strcpy(p->pack_name + path_len, ".keep");
-	if (git_futils_exists(p->pack_name) == GIT_SUCCESS)
+	if (git_path_exists(p->pack_name) == GIT_SUCCESS)
 		p->pack_keep = 1;
 
 	strcpy(p->pack_name + path_len, ".pack");
@@ -619,7 +612,7 @@ int git_packfile_check(struct git_pack_file **pack_out, const char *path)
 	/* ok, it looks sane as far as we can check without
 	 * actually mapping the pack file.
 	 */
-	p->mwf.size = (off_t)st.st_size;
+	p->mwf.size = st.st_size;
 	p->pack_local = 1;
 	p->mtime = (git_time_t)st.st_mtime;
 

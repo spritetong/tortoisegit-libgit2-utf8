@@ -24,6 +24,8 @@
 
 #define GIT_BRANCH_MASTER "master"
 
+#define GIT_CONFIG_CORE_REPOSITORYFORMATVERSION "core.repositoryformatversion"
+#define GIT_REPOSITORYFORMATVERSION 0
 
 static void drop_odb(git_repository *repo)
 {
@@ -79,14 +81,14 @@ void git_repository_free(git_repository *repo)
 static int quickcheck_repository_dir(git_buf *repository_path)
 {
 	/* Check OBJECTS_DIR first, since it will generate the longest path name */
-	if (git_futils_contains_dir(repository_path, GIT_OBJECTS_DIR, 0) < 0)
+	if (git_path_contains_dir(repository_path, GIT_OBJECTS_DIR, 0) < 0)
 		return GIT_ERROR;
 
 	/* Ensure HEAD file exists */
-	if (git_futils_contains_file(repository_path, GIT_HEAD_FILE, 0) < 0)
+	if (git_path_contains_file(repository_path, GIT_HEAD_FILE, 0) < 0)
 		return GIT_ERROR;
 
-	if (git_futils_contains_dir(repository_path, GIT_REFS_DIR, 0) < 0)
+	if (git_path_contains_dir(repository_path, GIT_REFS_DIR, 0) < 0)
 		return GIT_ERROR;
 
 	return GIT_SUCCESS;
@@ -164,12 +166,12 @@ int git_repository_open(git_repository **repo_out, const char *path)
 	 * of the working dir, by testing if it contains a `.git`
 	 * folder inside of it.
 	 */
-	git_futils_contains_dir(&path_buf, DOT_GIT, 1); /* append on success */
+	git_path_contains_dir(&path_buf, GIT_DIR, 1); /* append on success */
 	/* ignore error, since it just means `path/.git` doesn't exist */
 
 	if (quickcheck_repository_dir(&path_buf) < GIT_SUCCESS) {
 		error = git__throw(GIT_ENOTAREPO,
-			"The given path is not a valid Git repository");
+			"The given path (%s) is not a valid Git repository", git_buf_cstr(&path_buf));
 		goto cleanup;
 	}
 
@@ -491,7 +493,7 @@ static int read_gitfile(git_buf *path_out, const char *file_path, const char *ba
 
 	git_futils_freebuffer(&file);
 
-	if (error == GIT_SUCCESS && git_futils_exists(path_out->ptr) == 0)
+	if (error == GIT_SUCCESS && git_path_exists(path_out->ptr) == 0)
 		return GIT_SUCCESS;
 
 	return git__throw(GIT_EOBJCORRUPTED, "The `.git` file points to a nonexistent path");
@@ -535,7 +537,7 @@ int git_repository_discover(
 		 * If the `.git` file is regular instead of
 		 * a directory, it should contain the path of the actual git repository
 		 */
-		if (git_futils_isfile(normal_path.ptr) == GIT_SUCCESS) {
+		if (git_path_isfile(normal_path.ptr) == GIT_SUCCESS) {
 			git_buf gitfile_path = GIT_BUF_INIT;
 
 			error = read_gitfile(&gitfile_path, normal_path.ptr, bare_path.ptr);
@@ -557,7 +559,7 @@ int git_repository_discover(
 		/**
 		 * If the `.git` file is a folder, we check inside of it
 		 */
-		if (git_futils_isdir(normal_path.ptr) == GIT_SUCCESS) {
+		if (git_path_isdir(normal_path.ptr) == GIT_SUCCESS) {
 			error = quickcheck_repository_dir(&normal_path);
 			if (error == GIT_SUCCESS) {
 				found_path = &normal_path;
@@ -628,12 +630,46 @@ cleanup:
 	return error;
 }
 
-static int repo_init_reinit(const char *repository_path, int is_bare)
+static int check_repositoryformatversion(git_repository *repo)
 {
-	/* TODO: reinit the repository */
-	return git__throw(GIT_ENOTIMPLEMENTED,
-		"Failed to reinitialize the %srepository at '%s'. "
-		"This feature is not yet implemented",
+	git_config *config;
+	int version, error = GIT_SUCCESS;
+
+	if ((error = git_repository_config(&config, repo)) < GIT_SUCCESS)
+		return git__throw(error, "Failed to open config file.");
+
+	error = git_config_get_int32(config, GIT_CONFIG_CORE_REPOSITORYFORMATVERSION, &version);
+
+	if (GIT_REPOSITORYFORMATVERSION < version)
+		error = git__throw(GIT_ERROR, "Unsupported git repository version (Expected version <= %d, found %d).", GIT_REPOSITORYFORMATVERSION, version);
+
+	git_config_free(config);
+
+	return error;
+}
+
+static int repo_init_reinit(git_repository **repo_out, const char *repository_path, int is_bare)
+{
+	int error;
+	git_repository *repo = NULL;
+
+	if ((error = git_repository_open(&repo, repository_path)) < GIT_SUCCESS)
+		goto error;
+
+	if ((error = check_repositoryformatversion(repo)) < GIT_SUCCESS)
+		goto error;
+
+	/* TODO: reinitialize the templates */
+
+	*repo_out = repo;
+
+	return GIT_SUCCESS;
+
+error:
+	git_repository_free(repo);
+
+	return git__rethrow(error,
+		"Failed to reinitialize the %srepository at '%s'. ",
 		is_bare ? "bare " : "", repository_path);
 }
 
@@ -673,7 +709,7 @@ static int repo_init_config(const char *git_dir, int is_bare)
 		goto cleanup;
 
 	SET_REPO_CONFIG(bool, "core.bare", is_bare);
-	SET_REPO_CONFIG(int32, "core.repositoryformatversion", 0);
+	SET_REPO_CONFIG(int32, GIT_CONFIG_CORE_REPOSITORYFORMATVERSION, GIT_REPOSITORYFORMATVERSION);
 	/* TODO: what other defaults? */
 
 cleanup:
@@ -733,9 +769,9 @@ int git_repository_init(git_repository **repo_out, const char *path, unsigned is
 	if (error < GIT_SUCCESS)
 		return error;
 
-	if (git_futils_isdir(repository_path.ptr) == GIT_SUCCESS) {
+	if (git_path_isdir(repository_path.ptr) == GIT_SUCCESS) {
 		if (quickcheck_repository_dir(&repository_path) == GIT_SUCCESS) {
-			error = repo_init_reinit(repository_path.ptr, is_bare);
+			error = repo_init_reinit(repo_out, repository_path.ptr, is_bare);
 			git_buf_free(&repository_path);
 			return error;
 		}

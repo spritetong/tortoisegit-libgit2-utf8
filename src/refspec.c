@@ -57,7 +57,7 @@ const char *git_refspec_dst(const git_refspec *refspec)
 
 int git_refspec_src_match(const git_refspec *refspec, const char *refname)
 {
-	return refspec == NULL ? GIT_ENOMATCH : git__fnmatch(refspec->src, refname, 0);
+	return (refspec == NULL || refspec->src == NULL) ? GIT_ENOMATCH : git__fnmatch(refspec->src, refname, 0);
 }
 
 int git_refspec_transform(char *out, size_t outlen, const git_refspec *spec, const char *name)
@@ -107,7 +107,7 @@ int git_refspec_transform_r(git_buf *out, const git_refspec *spec, const char *n
 		return GIT_SUCCESS;
 
 	git_buf_truncate(out, out->size - 1); /* remove trailing '*' */
-	git_buf_puts(out, name);
+	git_buf_puts(out, name + strlen(spec->src) - 1);
 
 	return git_buf_lasterror(out);
 }

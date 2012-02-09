@@ -3,14 +3,8 @@
 #include "config.h"
 #include <ctype.h>
 
-#define GIT_ATTR_FILE_INREPO	"info/attributes"
-#define GIT_ATTR_FILE			".gitattributes"
-#define GIT_ATTR_FILE_SYSTEM	"gitattributes"
-
 static int collect_attr_files(
 	git_repository *repo, const char *path, git_vector *files);
-
-static int attr_cache_init(git_repository *repo);
 
 
 int git_attr_get(
@@ -27,7 +21,8 @@ int git_attr_get(
 
 	*value = NULL;
 
-	if ((error = git_attr_path__init(&path, pathname)) < GIT_SUCCESS ||
+	if ((error = git_attr_path__init(
+			&path, pathname, git_repository_workdir(repo))) < GIT_SUCCESS ||
 		(error = collect_attr_files(repo, pathname, &files)) < GIT_SUCCESS)
 		return git__rethrow(error, "Could not get attribute for %s", pathname);
 
@@ -75,7 +70,8 @@ int git_attr_get_many(
 
 	memset((void *)values, 0, sizeof(const char *) * num_attr);
 
-	if ((error = git_attr_path__init(&path, pathname)) < GIT_SUCCESS ||
+	if ((error = git_attr_path__init(
+			&path, pathname, git_repository_workdir(repo))) < GIT_SUCCESS ||
 		(error = collect_attr_files(repo, pathname, &files)) < GIT_SUCCESS)
 		return git__rethrow(error, "Could not get attributes for %s", pathname);
 
@@ -136,7 +132,8 @@ int git_attr_foreach(
 	git_attr_assignment *assign;
 	git_hashtable *seen = NULL;
 
-	if ((error = git_attr_path__init(&path, pathname)) < GIT_SUCCESS ||
+	if ((error = git_attr_path__init(
+			&path, pathname, git_repository_workdir(repo))) < GIT_SUCCESS ||
 		(error = collect_attr_files(repo, pathname, &files)) < GIT_SUCCESS)
 		return git__rethrow(error, "Could not get attributes for %s", pathname);
 
@@ -186,7 +183,7 @@ int git_attr_add_macro(
 	int error;
 	git_attr_rule *macro = NULL;
 
-	if ((error = attr_cache_init(repo)) < GIT_SUCCESS)
+	if ((error = git_attr_cache__init(repo)) < GIT_SUCCESS)
 		return error;
 
 	macro = git__calloc(1, sizeof(git_attr_rule));
@@ -213,37 +210,54 @@ int git_attr_add_macro(
 	return error;
 }
 
+int git_attr_cache__is_cached(git_repository *repo, const char *path)
+{
+	const char *cache_key = path;
+	if (repo && git__prefixcmp(cache_key, git_repository_workdir(repo)) == 0)
+		cache_key += strlen(git_repository_workdir(repo));
+	return (git_hashtable_lookup(repo->attrcache.files, cache_key) == NULL);
+}
 
 /* add git_attr_file to vector of files, loading if needed */
-static int push_attrs(
+int git_attr_cache__push_file(
 	git_repository *repo,
-	git_vector     *files,
+	git_vector     *stack,
 	const char     *base,
-	const char     *filename)
+	const char     *filename,
+	int (*loader)(git_repository *, const char *, git_attr_file *))
 {
 	int error = GIT_SUCCESS;
 	git_attr_cache *cache = &repo->attrcache;
 	git_buf path = GIT_BUF_INIT;
-	git_attr_file *file;
+	git_attr_file *file = NULL;
 	int add_to_cache = 0;
+	const char *cache_key;
 
-	if ((error = git_path_prettify(&path, filename, base)) < GIT_SUCCESS) {
-		if (error == GIT_EOSERR)
-			/* file was not found -- ignore error */
-			error = GIT_SUCCESS;
-		goto cleanup;
+	if (base != NULL) {
+		if ((error = git_buf_joinpath(&path, base, filename)) < GIT_SUCCESS)
+			goto cleanup;
+		filename = path.ptr;
 	}
 
 	/* either get attr_file from cache or read from disk */
-	file = git_hashtable_lookup(cache->files, path.ptr);
-	if (file == NULL) {
-		error = git_attr_file__from_file(repo, path.ptr, &file);
+	cache_key = filename;
+	if (repo && git__prefixcmp(cache_key, git_repository_workdir(repo)) == 0)
+		cache_key += strlen(git_repository_workdir(repo));
+
+	file = git_hashtable_lookup(cache->files, cache_key);
+	if (file == NULL && git_path_exists(filename) == GIT_SUCCESS) {
+		if ((error = git_attr_file__new(&file)) == GIT_SUCCESS) {
+			if ((error = loader(repo, filename, file)) < GIT_SUCCESS) {
+				git_attr_file__free(file);
+				file = NULL;
+			}
+		}
 		add_to_cache = (error == GIT_SUCCESS);
 	}
 
-	if (file != NULL) {
+	if (error == GIT_SUCCESS && file != NULL) {
 		/* add file to vector, if we found it */
-		error = git_vector_insert(files, file);
+		error = git_vector_insert(stack, file);
 
 		/* add file to cache, if it is new */
 		/* do this after above step b/c it is not critical */
@@ -256,6 +270,19 @@ cleanup:
 	return error;
 }
 
+#define push_attrs(R,S,B,F) \
+	git_attr_cache__push_file((R),(S),(B),(F),git_attr_file__from_file)
+
+typedef struct {
+	git_repository *repo;
+	git_vector *files;
+} attr_walk_up_info;
+
+static int push_one_attr(void *ref, git_buf *path)
+{
+	attr_walk_up_info *info = (attr_walk_up_info *)ref;
+	return push_attrs(info->repo, info->files, path->ptr, GIT_ATTR_FILE);
+}
 
 static int collect_attr_files(
 	git_repository *repo, const char *path, git_vector *files)
@@ -264,22 +291,16 @@ static int collect_attr_files(
 	git_buf dir = GIT_BUF_INIT;
 	git_config *cfg;
 	const char *workdir = git_repository_workdir(repo);
+	attr_walk_up_info info;
 
-	if ((error = attr_cache_init(repo)) < GIT_SUCCESS)
+	if ((error = git_attr_cache__init(repo)) < GIT_SUCCESS)
 		goto cleanup;
 
 	if ((error = git_vector_init(files, 4, NULL)) < GIT_SUCCESS)
 		goto cleanup;
 
-	if ((error = git_path_prettify(&dir, path, workdir)) < GIT_SUCCESS)
+	if ((error = git_path_find_dir(&dir, path, workdir)) < GIT_SUCCESS)
 		goto cleanup;
-
-	if (git_futils_isdir(dir.ptr) != GIT_SUCCESS) {
-		git_path_dirname_r(&dir, dir.ptr);
-		git_path_to_dir(&dir);
-		if ((error = git_buf_lasterror(&dir)) < GIT_SUCCESS)
-			goto cleanup;
-	}
 
 	/* in precendence order highest to lowest:
 	 * - $GIT_DIR/info/attributes
@@ -292,26 +313,15 @@ static int collect_attr_files(
 	if (error < GIT_SUCCESS)
 		goto cleanup;
 
-	if (workdir && git__prefixcmp(dir.ptr, workdir) == 0) {
-		ssize_t rootlen = (ssize_t)strlen(workdir);
-
-		do {
-			error = push_attrs(repo, files, dir.ptr, GIT_ATTR_FILE);
-			if (error == GIT_SUCCESS) {
-				git_path_dirname_r(&dir, dir.ptr);
-				git_path_to_dir(&dir);
-				error = git_buf_lasterror(&dir);
-			}
-		} while (!error && dir.size >= rootlen);
-	} else {
-		error = push_attrs(repo, files, dir.ptr, GIT_ATTR_FILE);
-	}
+	info.repo = repo;
+	info.files = files;
+	error = git_path_walk_up(&dir, workdir, push_one_attr, &info);
 	if (error < GIT_SUCCESS)
 		goto cleanup;
 
-	if (git_repository_config(&cfg, repo) == GIT_SUCCESS) {
+	if ((error = git_repository_config(&cfg, repo)) == GIT_SUCCESS) {
 		const char *core_attribs = NULL;
-		git_config_get_string(cfg, "core.attributesfile", &core_attribs);
+		git_config_get_string(cfg, GIT_ATTR_CONFIG, &core_attribs);
 		git_clearerror(); /* don't care if attributesfile is not set */
 		if (core_attribs)
 			error = push_attrs(repo, files, NULL, core_attribs);
@@ -337,7 +347,7 @@ static int collect_attr_files(
 }
 
 
-static int attr_cache_init(git_repository *repo)
+int git_attr_cache__init(git_repository *repo)
 {
 	int error = GIT_SUCCESS;
 	git_attr_cache *cache = &repo->attrcache;
@@ -366,7 +376,6 @@ static int attr_cache_init(git_repository *repo)
 
 	return error;
 }
-
 
 void git_attr_cache_flush(
 	git_repository *repo)
@@ -397,4 +406,13 @@ void git_attr_cache_flush(
 	}
 
 	repo->attrcache.initialized = 0;
+}
+
+int git_attr_cache__insert_macro(git_repository *repo, git_attr_rule *macro)
+{
+	if (macro->assigns.length == 0)
+		return git__throw(GIT_EMISSINGOBJDATA, "git attribute macro with no values");
+
+	return git_hashtable_insert(
+		repo->attrcache.macros, macro->match.pattern, macro);
 }

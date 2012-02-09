@@ -230,23 +230,13 @@ static char *interiorize_section(const char *orig)
 	if (last_dot == dot)
 		return git__strndup(orig, dot - orig);
 
-	section = git__malloc(len + 4);
+	section = git__strndup(orig, len);
 	if (section == NULL)
 		return NULL;
 
-	memset(section, 0x0, len + 4);
 	ret = section;
 	len = dot - orig;
-	memcpy(section, orig, len);
-	section += len;
-	len = strlen(" \"");
-	memcpy(section, " \"", len);
-	section += len;
-	len = last_dot - dot - 1;
-	memcpy(section, dot + 1, len);
-	section += len;
-	*section = '"';
-
+	git__strntolower(section, len);
 	return ret;
 }
 
@@ -499,7 +489,8 @@ static int cfg_getchar(diskfile_backend *cfg_file, int flags)
 	assert(cfg_file->reader.read_ptr);
 
 	do c = cfg_getchar_raw(cfg_file);
-	while (skip_whitespace && isspace(c));
+	while (skip_whitespace && isspace(c) &&
+	       !cfg_file->reader.eof);
 
 	if (skip_comments && (c == '#' || c == ';')) {
 		do c = cfg_getchar_raw(cfg_file);
@@ -844,7 +835,8 @@ static int config_parse(diskfile_backend *cfg_file)
 		c = cfg_peek(cfg_file, SKIP_WHITESPACE);
 
 		switch (c) {
-		case '\0': /* We've arrived at the end of the file */
+		case '\n': /* EOF when peeking, set EOF in the reader to exit the loop */
+			cfg_file->reader.eof = 1;
 			break;
 
 		case '[': /* section header, new section begins */

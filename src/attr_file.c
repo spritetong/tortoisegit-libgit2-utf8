@@ -6,42 +6,70 @@
 const char *git_attr__true  = "[internal]__TRUE__";
 const char *git_attr__false = "[internal]__FALSE__";
 
-static int git_attr_fnmatch__parse(git_attr_fnmatch *spec, const char **base);
 static int sort_by_hash_and_name(const void *a_raw, const void *b_raw);
 static void git_attr_rule__clear(git_attr_rule *rule);
 
-int git_attr_cache__insert_macro(git_repository *repo, git_attr_rule *macro)
+int git_attr_file__new(git_attr_file **attrs_ptr)
 {
-	if (macro->assigns.length == 0)
-		return git__throw(GIT_EMISSINGOBJDATA, "git attribute macro with no values");
-
-	return git_hashtable_insert(
-		repo->attrcache.macros, macro->match.pattern, macro);
-}
-
-int git_attr_file__from_buffer(
-	git_repository *repo, const char *buffer, git_attr_file **out)
-{
-	int error = GIT_SUCCESS;
+	int error;
 	git_attr_file *attrs = NULL;
-	const char *scan = NULL;
-	git_attr_rule *rule = NULL;
-
-	*out = NULL;
 
 	attrs = git__calloc(1, sizeof(git_attr_file));
 	if (attrs == NULL)
-		return git__throw(GIT_ENOMEM, "Could not allocate attribute storage");
+		error = GIT_ENOMEM;
+	else
+		error = git_vector_init(&attrs->rules, 4, NULL);
 
-	attrs->path = NULL;
-
-	error = git_vector_init(&attrs->rules, 4, NULL);
 	if (error != GIT_SUCCESS) {
-		git__rethrow(error, "Could not initialize attribute storage");
-		goto cleanup;
+		git__rethrow(error, "Could not allocate attribute storage");
+		git__free(attrs);
+		attrs = NULL;
 	}
 
+	*attrs_ptr = attrs;
+
+	return error;
+}
+
+int git_attr_file__set_path(
+	git_repository *repo, const char *path, git_attr_file *file)
+{
+	if (file->path != NULL) {
+		git__free(file->path);
+		file->path = NULL;
+	}
+
+	if (repo == NULL)
+		file->path = git__strdup(path);
+	else {
+		const char *workdir = git_repository_workdir(repo);
+
+		if (workdir && git__prefixcmp(path, workdir) == 0)
+			file->path = git__strdup(path + strlen(workdir));
+		else
+			file->path = git__strdup(path);
+	}
+
+	return (file->path == NULL) ? GIT_ENOMEM : GIT_SUCCESS;
+}
+
+int git_attr_file__from_buffer(
+	git_repository *repo, const char *buffer, git_attr_file *attrs)
+{
+	int error = GIT_SUCCESS;
+	const char *scan = NULL;
+	char *context = NULL;
+	git_attr_rule *rule = NULL;
+
+	assert(buffer && attrs);
+
 	scan = buffer;
+
+	if (attrs->path && git__suffixcmp(attrs->path, GIT_ATTR_FILE) == 0) {
+		context = git__strndup(attrs->path,
+			strlen(attrs->path) - strlen(GIT_ATTR_FILE));
+		if (!context) error = GIT_ENOMEM;
+	}
 
 	while (error == GIT_SUCCESS && *scan) {
 		/* allocate rule if needed */
@@ -51,7 +79,7 @@ int git_attr_file__from_buffer(
 		}
 
 		/* parse the next "pattern attr attr attr" line */
-		if (!(error = git_attr_fnmatch__parse(&rule->match, &scan)) &&
+		if (!(error = git_attr_fnmatch__parse(&rule->match, context, &scan)) &&
 			!(error = git_attr_assignment__parse(repo, &rule->assigns, &scan)))
 		{
 			if (rule->match.flags & GIT_ATTR_FNMATCH_MACRO)
@@ -73,35 +101,30 @@ int git_attr_file__from_buffer(
 		}
 	}
 
-cleanup:
-	if (error != GIT_SUCCESS) {
-		git_attr_rule__free(rule);
-		git_attr_file__free(attrs);
-	} else {
-		*out = attrs;
-	}
+	git_attr_rule__free(rule);
+	git__free(context);
 
 	return error;
 }
 
 int git_attr_file__from_file(
-	git_repository *repo, const char *path, git_attr_file **out)
+	git_repository *repo, const char *path, git_attr_file *file)
 {
 	int error = GIT_SUCCESS;
 	git_fbuffer fbuf = GIT_FBUFFER_INIT;
 
-	*out = NULL;
+	assert(path && file);
 
-	if ((error = git_futils_readbuffer(&fbuf, path)) < GIT_SUCCESS ||
-		(error = git_attr_file__from_buffer(repo, fbuf.data, out)) < GIT_SUCCESS)
-	{
-		git__rethrow(error, "Could not open attribute file '%s'", path);
-	} else {
-		/* save path (okay to fail) */
-		(*out)->path = git__strdup(path);
-	}
+	if (file->path == NULL)
+		error = git_attr_file__set_path(repo, path, file);
+
+	if (error == GIT_SUCCESS &&
+		(error = git_futils_readbuffer(&fbuf, path)) == GIT_SUCCESS)
+		error = git_attr_file__from_buffer(repo, fbuf.data, file);
 
 	git_futils_freebuffer(&fbuf);
+	if (error != GIT_SUCCESS)
+		git__rethrow(error, "Could not open attribute file '%s'", path);
 
 	return error;
 }
@@ -166,25 +189,37 @@ int git_attr_file__lookup_one(
 }
 
 
-int git_attr_rule__match_path(
-	git_attr_rule *rule,
+int git_attr_fnmatch__match(
+	git_attr_fnmatch *match,
 	const git_attr_path *path)
 {
 	int matched = FNM_NOMATCH;
 
-	if (rule->match.flags & GIT_ATTR_FNMATCH_DIRECTORY && !path->is_dir)
+	if (match->flags & GIT_ATTR_FNMATCH_DIRECTORY && !path->is_dir)
 		return matched;
 
-	if (rule->match.flags & GIT_ATTR_FNMATCH_FULLPATH)
-		matched = p_fnmatch(rule->match.pattern, path->path, FNM_PATHNAME);
+	if (match->flags & GIT_ATTR_FNMATCH_FULLPATH)
+		matched = p_fnmatch(match->pattern, path->path, FNM_PATHNAME);
+	else if (path->is_dir)
+		matched = p_fnmatch(match->pattern, path->basename, FNM_LEADING_DIR);
 	else
-		matched = p_fnmatch(rule->match.pattern, path->basename, 0);
+		matched = p_fnmatch(match->pattern, path->basename, 0);
+
+	return matched;
+}
+
+int git_attr_rule__match(
+	git_attr_rule *rule,
+	const git_attr_path *path)
+{
+	int matched = git_attr_fnmatch__match(&rule->match, path);
 
 	if (rule->match.flags & GIT_ATTR_FNMATCH_NEGATIVE)
 		matched = (matched == GIT_SUCCESS) ? FNM_NOMATCH : GIT_SUCCESS;
 
 	return matched;
 }
+
 
 git_attr_assignment *git_attr_rule__lookup_assignment(
 	git_attr_rule *rule, const char *name)
@@ -201,15 +236,26 @@ git_attr_assignment *git_attr_rule__lookup_assignment(
 }
 
 int git_attr_path__init(
-	git_attr_path *info, const char *path)
+	git_attr_path *info, const char *path, const char *base)
 {
+	assert(info && path);
 	info->path = path;
 	info->basename = strrchr(path, '/');
 	if (info->basename)
 		info->basename++;
 	if (!info->basename || !*info->basename)
 		info->basename = path;
-	info->is_dir = (git_futils_isdir(path) == GIT_SUCCESS);
+
+	if (base != NULL && git_path_root(path) < 0) {
+		git_buf full_path = GIT_BUF_INIT;
+		int error = git_buf_joinpath(&full_path, base, path);
+		if (error == GIT_SUCCESS)
+			info->is_dir = (git_path_isdir(full_path.ptr) == GIT_SUCCESS);
+		git_buf_free(&full_path);
+		return error;
+	}
+	info->is_dir = (git_path_isdir(path) == GIT_SUCCESS);
+
 	return GIT_SUCCESS;
 }
 
@@ -251,23 +297,22 @@ int git_attr_path__init(
  * GIT_ENOTFOUND if the fnmatch does not require matching, or
  * another error code there was an actual problem.
  */
-static int git_attr_fnmatch__parse(
+int git_attr_fnmatch__parse(
 	git_attr_fnmatch *spec,
+	const char *source,
 	const char **base)
 {
-	const char *pattern;
-	const char *scan;
+	const char *pattern, *scan;
 	int slash_count;
-	int error = GIT_SUCCESS;
 
-	assert(base && *base);
+	assert(spec && base && *base);
 
 	pattern = *base;
 
 	while (isspace(*pattern)) pattern++;
 	if (!*pattern || *pattern == '#') {
-		error = GIT_ENOTFOUND;
-		goto skip_to_eol;
+		*base = git__next_line(pattern);
+		return GIT_ENOTFOUND;
 	}
 
 	spec->flags = 0;
@@ -276,11 +321,8 @@ static int git_attr_fnmatch__parse(
 		if (strncmp(pattern, "[attr]", 6) == 0) {
 			spec->flags = spec->flags | GIT_ATTR_FNMATCH_MACRO;
 			pattern += 6;
-		} else {
-			/* unrecognized meta instructions - skip the line */
-			error = GIT_ENOTFOUND;
-			goto skip_to_eol;
 		}
+		/* else a character range like [a-e]* which is accepted */
 	}
 
 	if (*pattern == '!') {
@@ -290,6 +332,7 @@ static int git_attr_fnmatch__parse(
 
 	slash_count = 0;
 	for (scan = pattern; *scan != '\0'; ++scan) {
+		/* scan until (non-escaped) white space */
 		if (isspace(*scan) && *(scan - 1) != '\\')
 			break;
 
@@ -300,41 +343,53 @@ static int git_attr_fnmatch__parse(
 	}
 
 	*base = scan;
-	spec->length = scan - pattern;
-	spec->pattern = git__strndup(pattern, spec->length);
 
-	if (!spec->pattern) {
-		error = GIT_ENOMEM;
-		goto skip_to_eol;
-	} else {
-		char *from = spec->pattern, *to = spec->pattern;
-		while (*from) {
-			if (*from == '\\') {
-				from++;
-				spec->length--;
-			}
-			*to++ = *from++;
-		}
-		*to = '\0';
-	}
+	spec->length = scan - pattern;
 
 	if (pattern[spec->length - 1] == '/') {
 		spec->length--;
-		spec->pattern[spec->length] = '\0';
 		spec->flags = spec->flags | GIT_ATTR_FNMATCH_DIRECTORY;
 		if (--slash_count <= 0)
 			spec->flags = spec->flags & ~GIT_ATTR_FNMATCH_FULLPATH;
 	}
 
+	if ((spec->flags & GIT_ATTR_FNMATCH_FULLPATH) != 0 &&
+		source != NULL && git_path_root(pattern) < 0)
+	{
+		size_t sourcelen = strlen(source);
+		/* given an unrooted fullpath match from a file inside a repo,
+		 * prefix the pattern with the relative directory of the source file
+		 */
+		spec->pattern = git__malloc(sourcelen + spec->length + 1);
+		if (spec->pattern) {
+			memcpy(spec->pattern, source, sourcelen);
+			memcpy(spec->pattern + sourcelen, pattern, spec->length);
+			spec->length += sourcelen;
+			spec->pattern[spec->length] = '\0';
+		}
+	} else {
+		spec->pattern = git__strndup(pattern, spec->length);
+	}
+
+	if (!spec->pattern) {
+		*base = git__next_line(pattern);
+		return GIT_ENOMEM;
+	} else {
+		/* strip '\' that might have be used for internal whitespace */
+		char *to = spec->pattern;
+		for (scan = spec->pattern; *scan; to++, scan++) {
+			if (*scan == '\\')
+				scan++; /* skip '\' but include next char */
+			if (to != scan)
+				*to = *scan;
+		}
+		if (to != scan) {
+			*to = '\0';
+			spec->length = (to - spec->pattern);
+		}
+	}
+
 	return GIT_SUCCESS;
-
-skip_to_eol:
-	/* skip to end of line */
-	while (*pattern && *pattern != '\n') pattern++;
-	if (*pattern == '\n') pattern++;
-	*base = pattern;
-
-	return error;
 }
 
 static int sort_by_hash_and_name(const void *a_raw, const void *b_raw)
@@ -494,10 +549,7 @@ int git_attr_assignment__parse(
 	if (assign != NULL)
 		git_attr_assignment__free(assign);
 
-	while (*scan && *scan != '\n') scan++;
-	if (*scan == '\n') scan++;
-
-	*base = scan;
+	*base = git__next_line(scan);
 
 	return error;
 }
@@ -510,14 +562,15 @@ static void git_attr_rule__clear(git_attr_rule *rule)
 	if (!rule)
 		return;
 
+	if (!(rule->match.flags & GIT_ATTR_FNMATCH_IGNORE)) {
+		git_vector_foreach(&rule->assigns, i, assign)
+			GIT_REFCOUNT_DEC(assign, git_attr_assignment__free);
+		git_vector_free(&rule->assigns);
+	}
+
 	git__free(rule->match.pattern);
 	rule->match.pattern = NULL;
 	rule->match.length = 0;
-
-	git_vector_foreach(&rule->assigns, i, assign)
-		GIT_REFCOUNT_DEC(assign, git_attr_assignment__free);
-
-	git_vector_free(&rule->assigns);
 }
 
 void git_attr_rule__free(git_attr_rule *rule)
