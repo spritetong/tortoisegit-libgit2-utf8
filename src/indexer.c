@@ -1,13 +1,14 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
+#include <zlib.h>
+
 #include "git2/indexer.h"
 #include "git2/object.h"
-#include "git2/zlib.h"
 #include "git2/oid.h"
 
 #include "common.h"
@@ -345,7 +346,7 @@ int git_indexer_run(git_indexer *idx, git_indexer_stats *stats)
 		}
 
 		/* FIXME: Parse the object instead of hashing it */
-		error = git_odb__hash_obj(&oid, &obj);
+		error = git_odb__hashobj(&oid, &obj);
 		if (error < GIT_SUCCESS) {
 			error = git__rethrow(error, "Failed to hash object");
 			goto cleanup;

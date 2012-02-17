@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -738,7 +738,7 @@ error:
 
 static int skip_bom(diskfile_backend *cfg)
 {
-	static const char *utf8_bom = "\xef\xbb\xbf";
+	static const char utf8_bom[] = "\xef\xbb\xbf";
 
 	if (cfg->reader.buffer.len < sizeof(utf8_bom))
 		return GIT_SUCCESS;

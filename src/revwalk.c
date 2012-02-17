@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -558,6 +558,7 @@ void git_revwalk_reset(git_revwalk *walk)
 		commit->seen = 0;
 		commit->in_degree = 0;
 		commit->topo_delay = 0;
+		commit->uninteresting = 0;
 	);
 
 	git_pqueue_clear(&walk->iterator_time);

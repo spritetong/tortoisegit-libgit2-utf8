@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -14,7 +14,7 @@
 #include "fileops.h"
 
 #include "git2/oid.h"
-#include "git2/zlib.h"
+#include <zlib.h>
 
 static int packfile_open(struct git_pack_file *p);
 static off_t nth_packed_object_offset(const struct git_pack_file *p, uint32_t n);

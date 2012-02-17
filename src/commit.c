@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -146,10 +146,14 @@ int git_commit_create(
 		git_reference *target;
 
 		error = git_reference_lookup(&head, repo, update_ref);
-		if (error < GIT_SUCCESS)
+		if (error < GIT_SUCCESS && error != GIT_ENOTFOUND)
 			return git__rethrow(error, "Failed to create commit");
 
-		error = git_reference_resolve(&target, head);
+		if (error != GIT_ENOTFOUND) {
+			update_ref = git_reference_target(head);
+			error = git_reference_resolve(&target, head);
+		}
+
 		if (error < GIT_SUCCESS) {
 			if (error != GIT_ENOTFOUND) {
 				git_reference_free(head);
@@ -162,7 +166,7 @@ int git_commit_create(
 		 * point to) or after an orphan checkout, so if the target
 		 * branch doesn't exist yet, create it and return.
 		 */
-			error = git_reference_create_oid(&target, repo, git_reference_target(head), oid, 1);
+			error = git_reference_create_oid(&target, repo, update_ref, oid, 1);
 
 			git_reference_free(head);
 			if (error == GIT_SUCCESS)

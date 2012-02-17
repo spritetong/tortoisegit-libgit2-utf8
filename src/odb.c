@@ -1,12 +1,12 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
 #include "common.h"
-#include "git2/zlib.h"
+#include <zlib.h>
 #include "git2/object.h"
 #include "fileops.h"
 #include "hash.h"
@@ -33,13 +33,13 @@ static int format_object_header(char *hdr, size_t n, size_t obj_len, git_otype o
 	const char *type_str = git_object_type2string(obj_type);
 	int len = p_snprintf(hdr, n, "%s %"PRIuZ, type_str, obj_len);
 
-	if (len < 0 || ((size_t) len) >= n)
+	if (len < 0 || len >= (int)n)
 		return git__throw(GIT_ERROR, "Cannot format object header. Length is out of bounds");
 
 	return len+1;
 }
 
-int git_odb__hash_obj(git_oid *id, git_rawobj *obj)
+int git_odb__hashobj(git_oid *id, git_rawobj *obj)
 {
 	git_buf_vec vec[2];
 	char header[64];
@@ -113,22 +113,13 @@ void git_odb_object_free(git_odb_object *object)
 	git_cached_obj_decref((git_cached_obj *)object, &free_odb_object);
 }
 
-int git_odb_hashfile(git_oid *out, const char *path, git_otype type)
+int git_odb__hashfd(git_oid *out, git_file fd, size_t size, git_otype type)
 {
-	int fd, hdr_len;
+	int hdr_len;
 	char hdr[64], buffer[2048];
-	git_off_t size;
 	git_hash_ctx *ctx;
 
-	if ((fd = p_open(path, O_RDONLY)) < 0)
-		return git__throw(GIT_ENOTFOUND, "Could not open '%s'", path);
-
-	if ((size = git_futils_filesize(fd)) < 0 || !git__is_sizet(size)) {
-		p_close(fd);
-		return git__throw(GIT_EOSERR, "'%s' appears to be corrupted", path);
-	}
-
-	hdr_len = format_object_header(hdr, sizeof(hdr), (size_t)size, type);
+	hdr_len = format_object_header(hdr, sizeof(hdr), size, type);
 	if (hdr_len < 0)
 		return git__throw(GIT_ERROR, "Failed to format blob header. Length is out of bounds");
 
@@ -137,26 +128,83 @@ int git_odb_hashfile(git_oid *out, const char *path, git_otype type)
 	git_hash_update(ctx, hdr, hdr_len);
 
 	while (size > 0) {
-		ssize_t read_len;
-
-		read_len = read(fd, buffer, sizeof(buffer));
+		ssize_t read_len = read(fd, buffer, sizeof(buffer));
 
 		if (read_len < 0) {
-			p_close(fd);
 			git_hash_free_ctx(ctx);
-			return git__throw(GIT_EOSERR, "Can't read full file '%s'", path);
+			return git__throw(GIT_EOSERR, "Error when reading file: %s", strerror(errno));
 		}
 
 		git_hash_update(ctx, buffer, read_len);
 		size -= read_len;
 	}
 
-	p_close(fd);
-
 	git_hash_final(out, ctx);
 	git_hash_free_ctx(ctx);
 
 	return GIT_SUCCESS;
+}
+
+int git_odb__hashlink(git_oid *out, const char *path)
+{
+	struct stat st;
+	int error;
+	git_off_t size;
+
+	error = p_lstat(path, &st);
+	if (error < 0)
+		return git__throw(GIT_EOSERR, "Failed to stat blob. %s", strerror(errno));
+
+	size = st.st_size;
+
+	if (!git__is_sizet(size))
+		return git__throw(GIT_EOSERR, "File size overflow for 32-bit systems");
+
+	if (S_ISLNK(st.st_mode)) {
+		char *link_data;
+		ssize_t read_len;
+
+		link_data = git__malloc(size);
+		if (link_data == NULL)
+			return GIT_ENOMEM;
+
+		read_len = p_readlink(path, link_data, size + 1);
+		if (read_len != (ssize_t)size)
+			return git__throw(GIT_EOSERR, "Failed to read symlink data");
+
+		error = git_odb_hash(out, link_data, (size_t)size, GIT_OBJ_BLOB);
+		free(link_data);
+	} else { 
+		int fd;
+
+		if ((fd = p_open(path, O_RDONLY)) < 0)
+			return git__throw(GIT_ENOTFOUND, "Could not open '%s'", path);
+
+		error = git_odb__hashfd(out, fd, (size_t)size, GIT_OBJ_BLOB);
+		p_close(fd);
+	}
+
+	return error;
+}
+
+int git_odb_hashfile(git_oid *out, const char *path, git_otype type)
+{
+	int fd, error;
+	git_off_t size;
+
+	if ((fd = p_open(path, O_RDONLY)) < 0)
+		return git__throw(GIT_ENOTFOUND, "Could not open '%s'", path);
+
+	if ((size = git_futils_filesize(fd)) < 0 || !git__is_sizet(size)) {
+		p_close(fd);
+		return git__throw(GIT_EOSERR,
+			"File size overflow. The object is too big to fit in 32-bit mode");
+	}
+
+	error = git_odb__hashfd(out, fd, (size_t)size, type);
+
+	p_close(fd);
+	return error;
 }
 
 int git_odb_hash(git_oid *id, const void *data, size_t len, git_otype type)
@@ -169,7 +217,7 @@ int git_odb_hash(git_oid *id, const void *data, size_t len, git_otype type)
 	raw.len = len;
 	raw.type = type;
 
-	return git_odb__hash_obj(id, &raw);
+	return git_odb__hashobj(id, &raw);
 }
 
 /**

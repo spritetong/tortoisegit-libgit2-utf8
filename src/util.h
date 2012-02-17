@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2011 the libgit2 contributors
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -167,6 +167,15 @@ static signed char from_hex[] = {
 GIT_INLINE(int) git__fromhex(char h)
 {
 	return from_hex[(unsigned char) h];
+}
+
+GIT_INLINE(int) git__ishex(const char *str)
+{
+	unsigned i;
+	for (i=0; i<strlen(str); i++)
+		if (git__fromhex(str[i]) < 0)
+			return 0;
+	return 1;
 }
 
 #endif /* INCLUDE_util_h__ */
