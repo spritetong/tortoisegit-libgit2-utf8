@@ -7,14 +7,17 @@
 #include "buffer.h"
 #include "posix.h"
 #include <stdarg.h>
+#include <ctype.h>
 
 /* Used as default value for git_buf->ptr so that people can always
  * assume ptr is non-NULL and zero terminated even for new git_bufs.
  */
 char git_buf_initbuf[1];
 
+static char git_buf__oom;
+
 #define ENSURE_SIZE(b, d) \
-	if ((ssize_t)(d) > buf->asize && git_buf_grow(b, (d)) < GIT_SUCCESS)\
+	if ((d) > buf->asize && git_buf_grow(b, (d)) < GIT_SUCCESS)\
 		return GIT_ENOMEM;
 
 
@@ -31,8 +34,10 @@ void git_buf_init(git_buf *buf, size_t initial_size)
 int git_buf_grow(git_buf *buf, size_t target_size)
 {
 	int error = git_buf_try_grow(buf, target_size);
-	if (error != GIT_SUCCESS)
-		buf->asize = -1;
+	if (error != GIT_SUCCESS) {
+		buf->ptr = &git_buf__oom;
+	}
+
 	return error;
 }
 
@@ -41,17 +46,17 @@ int git_buf_try_grow(git_buf *buf, size_t target_size)
 	char *new_ptr;
 	size_t new_size;
 
-	if (buf->asize < 0)
+	if (buf->ptr == &git_buf__oom)
 		return GIT_ENOMEM;
 
-	if (target_size <= (size_t)buf->asize)
+	if (target_size <= buf->asize)
 		return GIT_SUCCESS;
 
 	if (buf->asize == 0) {
 		new_size = target_size;
 		new_ptr = NULL;
 	} else {
-		new_size = (size_t)buf->asize;
+		new_size = buf->asize;
 		new_ptr = buf->ptr;
 	}
 
@@ -64,7 +69,6 @@ int git_buf_try_grow(git_buf *buf, size_t target_size)
 	new_size = (new_size + 7) & ~7;
 
 	new_ptr = git__realloc(new_ptr, new_size);
-	/* if realloc fails, return without modifying the git_buf */
 	if (!new_ptr)
 		return GIT_ENOMEM;
 
@@ -83,7 +87,7 @@ void git_buf_free(git_buf *buf)
 {
 	if (!buf) return;
 
-	if (buf->ptr != git_buf_initbuf)
+	if (buf->ptr != git_buf_initbuf && buf->ptr != &git_buf__oom)
 		git__free(buf->ptr);
 
 	git_buf_init(buf, 0);
@@ -98,12 +102,12 @@ void git_buf_clear(git_buf *buf)
 
 int git_buf_oom(const git_buf *buf)
 {
-	return (buf->asize < 0);
+	return (buf->ptr == &git_buf__oom);
 }
 
 int git_buf_lasterror(const git_buf *buf)
 {
-	return (buf->asize < 0) ? GIT_ENOMEM : GIT_SUCCESS;
+	return (buf->ptr == &git_buf__oom) ? GIT_ENOMEM : GIT_SUCCESS;
 }
 
 int git_buf_set(git_buf *buf, const char *data, size_t len)
@@ -162,11 +166,12 @@ int git_buf_printf(git_buf *buf, const char *format, ...)
 		va_end(arglist);
 
 		if (len < 0) {
-			buf->asize = -1;
+			free(buf->ptr);
+			buf->ptr = &git_buf__oom;
 			return GIT_ENOMEM;
 		}
 
-		if (len + 1 <= buf->asize - buf->size) {
+		if ((size_t)len + 1 <= buf->asize - buf->size) {
 			buf->size += len;
 			break;
 		}
@@ -205,12 +210,18 @@ void git_buf_consume(git_buf *buf, const char *end)
 	}
 }
 
-void git_buf_truncate(git_buf *buf, ssize_t len)
+void git_buf_truncate(git_buf *buf, size_t len)
 {
-	if (len >= 0 && len < buf->size) {
+	if (len < buf->size) {
 		buf->size = len;
 		buf->ptr[buf->size] = '\0';
 	}
+}
+
+void git_buf_rtruncate_at_char(git_buf *buf, char separator)
+{
+	int idx = git_buf_rfind_next(buf, separator);
+	git_buf_truncate(buf, idx < 0 ? 0 : idx);
 }
 
 void git_buf_swap(git_buf *buf_a, git_buf *buf_b)
@@ -224,7 +235,7 @@ char *git_buf_detach(git_buf *buf)
 {
 	char *data = buf->ptr;
 
-	if (buf->asize <= 0)
+	if (buf->asize == 0 || buf->ptr == &git_buf__oom)
 		return NULL;
 
 	git_buf_init(buf, 0);
@@ -232,7 +243,7 @@ char *git_buf_detach(git_buf *buf)
 	return data;
 }
 
-void git_buf_attach(git_buf *buf, char *ptr, ssize_t asize)
+void git_buf_attach(git_buf *buf, char *ptr, size_t asize)
 {
 	git_buf_free(buf);
 
@@ -327,7 +338,7 @@ int git_buf_join(
 	const char *str_b)
 {
 	int error = GIT_SUCCESS;
-	size_t strlen_a = strlen(str_a);
+	size_t strlen_a = str_a ? strlen(str_a) : 0;
 	size_t strlen_b = strlen(str_b);
 	int need_sep = 0;
 	ssize_t offset_a = -1;
@@ -365,4 +376,23 @@ int git_buf_join(
 	buf->ptr[buf->size] = '\0';
 
 	return error;
+}
+
+void git_buf_rtrim(git_buf *buf)
+{
+	while (buf->size > 0) {
+		if (!isspace(buf->ptr[buf->size - 1]))
+			break;
+
+		buf->size--;
+	}
+
+	buf->ptr[buf->size] = '\0';
+}
+
+int git_buf_cmp(const git_buf *a, const git_buf *b)
+{
+	int result = memcmp(a->ptr, b->ptr, min(a->size, b->size));
+	return (result != 0) ? result :
+		(a->size < b->size) ? -1 : (a->size > b->size) ? 1 : 0;
 }

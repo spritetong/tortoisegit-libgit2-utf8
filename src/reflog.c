@@ -183,7 +183,7 @@ int git_reflog_read(git_reflog **reflog, git_reference *ref)
 {
 	int error;
 	git_buf log_path = GIT_BUF_INIT;
-	git_fbuffer log_file = GIT_FBUFFER_INIT;
+	git_buf log_file = GIT_BUF_INIT;
 	git_reflog *log = NULL;
 
 	*reflog = NULL;
@@ -201,7 +201,7 @@ int git_reflog_read(git_reflog **reflog, git_reference *ref)
 		goto cleanup;
 	}
 
-	if ((error = reflog_parse(log, log_file.data, log_file.len)) < GIT_SUCCESS)
+	if ((error = reflog_parse(log, log_file.ptr, log_file.size)) < GIT_SUCCESS)
 		git__rethrow(error, "Failed to read reflog");
 	else
 		*reflog = log;
@@ -209,7 +209,7 @@ int git_reflog_read(git_reflog **reflog, git_reference *ref)
 cleanup:
 	if (error != GIT_SUCCESS && log != NULL)
 		git_reflog_free(log);
-	git_futils_freebuffer(&log_file);
+	git_buf_free(&log_file);
 	git_buf_free(&log_path);
 
 	return error;
@@ -237,7 +237,7 @@ int git_reflog_write(git_reference *ref, const git_oid *oid_old,
 		return error;
 	}
 
-	git_oid_to_string(new, GIT_OID_HEXSZ+1, oid);
+	git_oid_tostr(new, GIT_OID_HEXSZ+1, oid);
 
 	git_reference_free(r);
 
@@ -263,7 +263,7 @@ int git_reflog_write(git_reference *ref, const git_oid *oid_old,
 		goto cleanup;
 
 	if (oid_old)
-		git_oid_to_string(old, sizeof(old), oid_old);
+		git_oid_tostr(old, sizeof(old), oid_old);
 	else
 		p_snprintf(old, sizeof(old), "%0*d", GIT_OID_HEXSZ, 0);
 

@@ -25,7 +25,6 @@ static int resize_vector(git_vector *v)
 	return GIT_SUCCESS;
 }
 
-
 void git_vector_free(git_vector *v)
 {
 	assert(v);
@@ -188,6 +187,12 @@ int git_vector_remove(git_vector *v, unsigned int idx)
 	return GIT_SUCCESS;
 }
 
+void git_vector_pop(git_vector *v)
+{
+	if (v->length > 0)
+		v->length--;
+}
+
 void git_vector_uniq(git_vector *v)
 {
 	git_vector_cmp cmp;
@@ -215,4 +220,14 @@ void git_vector_clear(git_vector *v)
 	v->sorted = 1;
 }
 
+void git_vector_swap(git_vector *a, git_vector *b)
+{
+	git_vector t;
 
+	if (!a || !b || a == b)
+		return;
+
+	memcpy(&t, a, sizeof(t));
+	memcpy(a, b, sizeof(t));
+	memcpy(b, &t, sizeof(t));
+}

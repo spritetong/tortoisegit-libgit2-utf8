@@ -32,15 +32,15 @@ struct packref {
 static const int default_table_size = 32;
 
 static int reference_read(
-	git_fbuffer *file_content,
+	git_buf *file_content,
 	time_t *mtime,
 	const char *repo_path,
 	const char *ref_name,
 	int *updated);
 
 /* loose refs */
-static int loose_parse_symbolic(git_reference *ref, git_fbuffer *file_content);
-static int loose_parse_oid(git_oid *ref, git_fbuffer *file_content);
+static int loose_parse_symbolic(git_reference *ref, git_buf *file_content);
+static int loose_parse_oid(git_oid *ref, git_buf *file_content);
 static int loose_lookup(git_reference *ref);
 static int loose_lookup_to_packfile(struct packref **ref_out,
 	git_repository *repo, const char *name);
@@ -105,7 +105,7 @@ static int reference_alloc(
 
 	reference->name = git__strdup(name);
 	if (reference->name == NULL) {
-		free(reference);
+		git__free(reference);
 		return GIT_ENOMEM;
 	}
 
@@ -113,7 +113,7 @@ static int reference_alloc(
 	return GIT_SUCCESS;
 }
 
-static int reference_read(git_fbuffer *file_content, time_t *mtime, const char *repo_path, const char *ref_name, int *updated)
+static int reference_read(git_buf *file_content, time_t *mtime, const char *repo_path, const char *ref_name, int *updated)
 {
 	git_buf path = GIT_BUF_INIT;
 	int     error = GIT_SUCCESS;
@@ -129,15 +129,15 @@ static int reference_read(git_fbuffer *file_content, time_t *mtime, const char *
 	return error;
 }
 
-static int loose_parse_symbolic(git_reference *ref, git_fbuffer *file_content)
+static int loose_parse_symbolic(git_reference *ref, git_buf *file_content)
 {
 	const unsigned int header_len = strlen(GIT_SYMREF);
 	const char *refname_start;
 	char *eol;
 
-	refname_start = (const char *)file_content->data;
+	refname_start = (const char *)file_content->ptr;
 
-	if (file_content->len < (header_len + 1))
+	if (file_content->size < (header_len + 1))
 		return git__throw(GIT_EOBJCORRUPTED,
 			"Failed to parse loose reference. Object too short");
 
@@ -165,15 +165,15 @@ static int loose_parse_symbolic(git_reference *ref, git_fbuffer *file_content)
 	return GIT_SUCCESS;
 }
 
-static int loose_parse_oid(git_oid *oid, git_fbuffer *file_content)
+static int loose_parse_oid(git_oid *oid, git_buf *file_content)
 {
 	int error;
 	char *buffer;
 
-	buffer = (char *)file_content->data;
+	buffer = (char *)file_content->ptr;
 
 	/* File format: 40 chars (OID) + newline */
-	if (file_content->len < GIT_OID_HEXSZ + 1)
+	if (file_content->size < GIT_OID_HEXSZ + 1)
 		return git__throw(GIT_EOBJCORRUPTED,
 			"Failed to parse loose reference. Reference too short");
 
@@ -193,26 +193,26 @@ static int loose_parse_oid(git_oid *oid, git_fbuffer *file_content)
 
 static git_rtype loose_guess_rtype(const git_buf *full_path)
 {
-	git_fbuffer ref_file = GIT_FBUFFER_INIT;
+	git_buf ref_file = GIT_BUF_INIT;
 	git_rtype type;
 
 	type = GIT_REF_INVALID;
 
 	if (git_futils_readbuffer(&ref_file, full_path->ptr) == GIT_SUCCESS) {
-		if (git__prefixcmp((const char *)(ref_file.data), GIT_SYMREF) == 0)
+		if (git__prefixcmp((const char *)(ref_file.ptr), GIT_SYMREF) == 0)
 			type = GIT_REF_SYMBOLIC;
 		else
 			type = GIT_REF_OID;
 	}
 
-	git_futils_freebuffer(&ref_file);
+	git_buf_free(&ref_file);
 	return type;
 }
 
 static int loose_lookup(git_reference *ref)
 {
 	int error = GIT_SUCCESS, updated;
-	git_fbuffer ref_file = GIT_FBUFFER_INIT;
+	git_buf ref_file = GIT_BUF_INIT;
 
 	if (reference_read(&ref_file, &ref->mtime,
 			ref->owner->path_repository, ref->name, &updated) < GIT_SUCCESS)
@@ -222,13 +222,13 @@ static int loose_lookup(git_reference *ref)
 		return GIT_SUCCESS;
 
 	if (ref->flags & GIT_REF_SYMBOLIC) {
-		free(ref->target.symbolic);
+		git__free(ref->target.symbolic);
 		ref->target.symbolic = NULL;
 	}
 
 	ref->flags = 0;
 
-	if (git__prefixcmp((const char *)(ref_file.data), GIT_SYMREF) == 0) {
+	if (git__prefixcmp((const char *)(ref_file.ptr), GIT_SYMREF) == 0) {
 		ref->flags |= GIT_REF_SYMBOLIC;
 		error = loose_parse_symbolic(ref, &ref_file);
 	} else {
@@ -236,7 +236,7 @@ static int loose_lookup(git_reference *ref)
 		error = loose_parse_oid(&ref->target.oid, &ref_file);
 	}
 
-	git_futils_freebuffer(&ref_file);
+	git_buf_free(&ref_file);
 
 	if (error < GIT_SUCCESS)
 		return git__rethrow(error, "Failed to lookup loose reference");
@@ -250,7 +250,7 @@ static int loose_lookup_to_packfile(
 		const char *name)
 {
 	int error = GIT_SUCCESS;
-	git_fbuffer ref_file = GIT_FBUFFER_INIT;
+	git_buf ref_file = GIT_BUF_INIT;
 	struct packref *ref = NULL;
 	size_t name_len;
 
@@ -273,12 +273,13 @@ static int loose_lookup_to_packfile(
 	ref->flags = GIT_PACKREF_WAS_LOOSE;
 
 	*ref_out = ref;
-	git_futils_freebuffer(&ref_file);
+	git_buf_free(&ref_file);
 	return GIT_SUCCESS;
 
 cleanup:
-	git_futils_freebuffer(&ref_file);
-	free(ref);
+	git_buf_free(&ref_file);
+	git__free(ref);
+
 	return git__rethrow(error, "Failed to lookup loose reference");
 }
 
@@ -420,14 +421,14 @@ static int packed_parse_oid(
 	return GIT_SUCCESS;
 
 cleanup:
-	free(ref);
+	git__free(ref);
 	return git__rethrow(error, "Failed to parse OID of packed reference");
 }
 
 static int packed_load(git_repository *repo)
 {
 	int error = GIT_SUCCESS, updated;
-	git_fbuffer packfile = GIT_FBUFFER_INIT;
+	git_buf packfile = GIT_BUF_INIT;
 	const char *buffer_start, *buffer_end;
 	git_refcache *ref_cache = &repo->references;
 
@@ -468,8 +469,8 @@ static int packed_load(git_repository *repo)
 
 	git_hashtable_clear(ref_cache->packfile);
 
-	buffer_start = (const char *)packfile.data;
-	buffer_end = (const char *)(buffer_start) + packfile.len;
+	buffer_start = (const char *)packfile.ptr;
+	buffer_end = (const char *)(buffer_start) + packfile.size;
 
 	while (buffer_start < buffer_end && buffer_start[0] == '#') {
 		buffer_start = strchr(buffer_start, '\n');
@@ -495,18 +496,18 @@ static int packed_load(git_repository *repo)
 
 		error = git_hashtable_insert(ref_cache->packfile, ref->name, ref);
 		if (error < GIT_SUCCESS) {
-			free(ref);
+			git__free(ref);
 			goto cleanup;
 		}
 	}
 
-	git_futils_freebuffer(&packfile);
+	git_buf_free(&packfile);
 	return GIT_SUCCESS;
 
 cleanup:
 	git_hashtable_free(ref_cache->packfile);
 	ref_cache->packfile = NULL;
-	git_futils_freebuffer(&packfile);
+	git_buf_free(&packfile);
 	return git__rethrow(error, "Failed to load packed references");
 }
 
@@ -560,12 +561,12 @@ static int _dirent_loose_load(void *data, git_buf *full_path)
 		if (git_hashtable_insert2(
 			repository->references.packfile,
 			ref->name, ref, &old_ref) < GIT_SUCCESS) {
-			free(ref);
+			git__free(ref);
 			return GIT_ENOMEM;
 		}
 
 		if (old_ref != NULL)
-			free(old_ref);
+			git__free(old_ref);
 	}
 
 	return error == GIT_SUCCESS ?
@@ -773,9 +774,8 @@ static int packed_write(git_repository *repo)
 	/* Load all the packfile into a vector */
 	{
 		struct packref *reference;
-		const void *GIT_UNUSED(_unused);
 
-		GIT_HASHTABLE_FOREACH(repo->references.packfile, _unused, reference,
+		GIT_HASHTABLE_FOREACH_VALUE(repo->references.packfile, reference,
 			/* cannot fail: vector already has the right size */
 			git_vector_insert(&packing_list, reference);
 		);
@@ -929,7 +929,7 @@ static int packed_lookup(git_reference *ref)
 		return GIT_SUCCESS;
 
 	if (ref->flags & GIT_REF_SYMBOLIC) {
-		free(ref->target.symbolic);
+		git__free(ref->target.symbolic);
 		ref->target.symbolic = NULL;
 	}
 
@@ -1513,12 +1513,11 @@ int git_reference_foreach(
 	/* list all the packed references first */
 	if (list_flags & GIT_REF_PACKED) {
 		const char *ref_name;
-		void *GIT_UNUSED(_unused);
 
 		if ((error = packed_load(repo)) < GIT_SUCCESS)
 			return git__rethrow(error, "Failed to list references");
 
-		GIT_HASHTABLE_FOREACH(repo->references.packfile, ref_name, _unused,
+		GIT_HASHTABLE_FOREACH_KEY(repo->references.packfile, ref_name,
 			if ((error = callback(ref_name, payload)) < GIT_SUCCESS)
 				return git__throw(error,
 					"Failed to list references. User callback failed");
@@ -1595,12 +1594,10 @@ void git_repository__refcache_free(git_refcache *refs)
 	assert(refs);
 
 	if (refs->packfile) {
-		const void *GIT_UNUSED(_unused);
 		struct packref *reference;
 
-		GIT_HASHTABLE_FOREACH(refs->packfile, _unused, reference,
-			free(reference);
-		);
+		GIT_HASHTABLE_FOREACH_VALUE(
+			refs->packfile, reference, git__free(reference));
 
 		git_hashtable_free(refs->packfile);
 	}

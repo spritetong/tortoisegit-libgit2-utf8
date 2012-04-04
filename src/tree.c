@@ -97,7 +97,7 @@ static int tree_key_search(git_vector *entries, const char *filename)
 	for (i = homing; i < (int)entries->length; ++i) {
 		entry = entries->contents[i];
 
-		if (homing_search_cmp(&ksearch, entry) != 0)
+		if (homing_search_cmp(&ksearch, entry) < 0)
 			break;
 
 		if (strcmp(filename, entry->filename) == 0)
@@ -109,7 +109,7 @@ static int tree_key_search(git_vector *entries, const char *filename)
 	for (i = homing - 1; i >= 0; --i) {
 		entry = entries->contents[i];
 
-		if (homing_search_cmp(&ksearch, entry) != 0)
+		if (homing_search_cmp(&ksearch, entry) > 0)
 			break;
 
 		if (strcmp(filename, entry->filename) == 0)
@@ -363,6 +363,7 @@ static int write_tree(
 			written = write_tree(&sub_oid, repo, index, subdir, i);
 			if (written < 0) {
 				error = git__rethrow(written, "Failed to write subtree %s", subdir);
+				goto cleanup;
 			} else {
 				i = written - 1; /* -1 because of the loop increment */
 			}

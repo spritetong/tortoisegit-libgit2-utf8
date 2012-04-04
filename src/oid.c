@@ -88,7 +88,7 @@ char *git_oid_allocfmt(const git_oid *oid)
 	return str;
 }
 
-char *git_oid_to_string(char *out, size_t n, const git_oid *oid)
+char *git_oid_tostr(char *out, size_t n, const git_oid *oid)
 {
 	char str[GIT_OID_HEXSZ];
 
@@ -188,6 +188,16 @@ int git_oid_streq(const git_oid *a, const char *str)
 		return git__rethrow(error, "Failed to convert '%s' to oid.", str);
 
 	return git_oid_cmp(a, &id) == 0 ? GIT_SUCCESS : GIT_ERROR;
+}
+
+int git_oid_iszero(const git_oid *oid_a)
+{
+	const unsigned char *a = oid_a->id;
+	unsigned int i;
+	for (i = 0; i < GIT_OID_RAWSZ; ++i, ++a)
+		if (*a != 0)
+			return 0;
+	return 1;
 }
 
 typedef short node_index;

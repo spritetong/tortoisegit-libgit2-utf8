@@ -17,17 +17,8 @@
  *
  * Read whole files into an in-memory buffer for processing
  */
-#define GIT_FBUFFER_INIT {NULL, 0}
-
-typedef struct { /* file io buffer */
-	void *data; /* data bytes	*/
-	size_t len; /* data length */
-} git_fbuffer;
-
-extern int git_futils_readbuffer(git_fbuffer *obj, const char *path);
-extern int git_futils_readbuffer_updated(git_fbuffer *obj, const char *path, time_t *mtime, int *updated);
-extern void git_futils_freebuffer(git_fbuffer *obj);
-extern void git_futils_fbuffer_rtrim(git_fbuffer *obj);
+extern int git_futils_readbuffer(git_buf *obj, const char *path);
+extern int git_futils_readbuffer_updated(git_buf *obj, const char *path, time_t *mtime, int *updated);
 
 /**
  * File utils
@@ -85,11 +76,20 @@ extern int git_futils_mktmp(git_buf *path_out, const char *filename);
  */
 extern int git_futils_mv_withpath(const char *from, const char *to, const mode_t dirmode);
 
-
 /**
  * Get the filesize in bytes of a file
  */
 extern git_off_t git_futils_filesize(git_file fd);
+
+#define GIT_MODE_PERMS_MASK			0777
+#define GIT_CANONICAL_PERMS(MODE)	(((MODE) & 0100) ? 0755 : 0644)
+#define GIT_MODE_TYPE(MODE)			((MODE) & ~GIT_MODE_PERMS_MASK)
+
+/**
+ * Convert a mode_t from the OS to a legal git mode_t value.
+ */
+extern mode_t git_futils_canonical_mode(mode_t raw_mode);
+
 
 /**
  * Read-only map all or part of a file into memory.
@@ -111,6 +111,19 @@ extern int git_futils_mmap_ro(
 	git_file fd,
 	git_off_t begin,
 	size_t len);
+
+/**
+ * Read-only map an entire file.
+ *
+ * @param out buffer to populate with the mapping information.
+ * @param path path to file to be opened.
+ * @return
+ * - GIT_SUCCESS on success;
+ * - GIT_EOSERR on an unspecified OS related error.
+ */
+extern int git_futils_mmap_ro_file(
+	git_map *out,
+	const char *path);
 
 /**
  * Release the memory associated with a previous memory mapping.

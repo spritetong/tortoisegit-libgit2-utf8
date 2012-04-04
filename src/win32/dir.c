@@ -58,25 +58,43 @@ git__DIR *git__opendir(const char *dir)
 	return new;
 }
 
-struct git__dirent *git__readdir(git__DIR *d)
+int git__readdir_ext(
+	git__DIR *d,
+	struct git__dirent *entry,
+	struct git__dirent **result,
+	int *is_dir)
 {
-	if (!d || d->h == INVALID_HANDLE_VALUE)
-		return NULL;
+	if (!d || !entry || !result || d->h == INVALID_HANDLE_VALUE)
+		return -1;
 
 	if (d->first)
 		d->first = 0;
-	else {
-		if (!FindNextFileW(d->h, &d->f))
-			return NULL;
+	else if (!FindNextFileW(d->h, &d->f)) {
+		*result = NULL;
+		return 0;
 	}
 
-	if (wcslen(d->f.cFileName) >= sizeof(d->entry.d_name))
+	if (wcslen(d->f.cFileName) >= sizeof(entry->d_name))
+		return -1;
+
+	entry->d_ino = 0;
+	WideCharToMultiByte(
+		gitwin_get_codepage(), 0, d->f.cFileName, -1,
+		entry->d_name, GIT_PATH_MAX, NULL, NULL);
+
+	*result = entry;
+	if (is_dir != NULL)
+		*is_dir = ((d->f.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+
+	return 0;
+}
+
+struct git__dirent *git__readdir(git__DIR *d)
+{
+	struct git__dirent *result;
+	if (git__readdir_ext(d, &d->entry, &result, NULL) < 0)
 		return NULL;
-
-	d->entry.d_ino = 0;
-	WideCharToMultiByte(gitwin_get_codepage(), 0, d->f.cFileName, -1, d->entry.d_name, GIT_PATH_MAX, NULL, NULL);
-
-	return &d->entry;
+	return result;
 }
 
 void git__rewinddir(git__DIR *d)

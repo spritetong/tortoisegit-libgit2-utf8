@@ -43,6 +43,8 @@ static void drop_config(git_repository *repo)
 		git_config_free(repo->_config);
 		repo->_config = NULL;
 	}
+
+	git_repository__cvar_cache_clear(repo);
 }
 
 static void drop_index(git_repository *repo)
@@ -81,14 +83,14 @@ void git_repository_free(git_repository *repo)
 static int quickcheck_repository_dir(git_buf *repository_path)
 {
 	/* Check OBJECTS_DIR first, since it will generate the longest path name */
-	if (git_path_contains_dir(repository_path, GIT_OBJECTS_DIR, 0) < 0)
+	if (git_path_contains_dir(repository_path, GIT_OBJECTS_DIR) < 0)
 		return GIT_ERROR;
 
 	/* Ensure HEAD file exists */
-	if (git_path_contains_file(repository_path, GIT_HEAD_FILE, 0) < 0)
+	if (git_path_contains_file(repository_path, GIT_HEAD_FILE) < 0)
 		return GIT_ERROR;
 
-	if (git_path_contains_dir(repository_path, GIT_REFS_DIR, 0) < 0)
+	if (git_path_contains_dir(repository_path, GIT_REFS_DIR) < 0)
 		return GIT_ERROR;
 
 	return GIT_SUCCESS;
@@ -110,6 +112,9 @@ static git_repository *repository_alloc(void)
 		git__free(repo);
 		return NULL;
 	}
+
+	/* set all the entries in the cvar cache to `unset` */
+	git_repository__cvar_cache_clear(repo);
 
 	return repo;
 }
@@ -166,8 +171,8 @@ int git_repository_open(git_repository **repo_out, const char *path)
 	 * of the working dir, by testing if it contains a `.git`
 	 * folder inside of it.
 	 */
-	git_path_contains_dir(&path_buf, GIT_DIR, 1); /* append on success */
-	/* ignore error, since it just means `path/.git` doesn't exist */
+	if (git_path_contains_dir(&path_buf, GIT_DIR) == GIT_SUCCESS)
+		git_buf_joinpath(&path_buf, path_buf.ptr, GIT_DIR);
 
 	if (quickcheck_repository_dir(&path_buf) < GIT_SUCCESS) {
 		error = git__throw(GIT_ENOTAREPO,
@@ -467,7 +472,7 @@ static int retrieve_ceiling_directories_offset(
  */
 static int read_gitfile(git_buf *path_out, const char *file_path, const char *base_path)
 {
-	git_fbuffer file;
+	git_buf file = GIT_BUF_INIT;
 	int error;
 
 	assert(path_out && file_path);
@@ -476,22 +481,22 @@ static int read_gitfile(git_buf *path_out, const char *file_path, const char *ba
 	if (error < GIT_SUCCESS)
 		return error;
 
-	if (git__prefixcmp((char *)file.data, GIT_FILE_CONTENT_PREFIX)) {
-		git_futils_freebuffer(&file);
+	if (git__prefixcmp((char *)file.ptr, GIT_FILE_CONTENT_PREFIX)) {
+		git_buf_free(&file);
 		return git__throw(GIT_ENOTFOUND, "Invalid gitfile format `%s`", file_path);
 	}
 
-	git_futils_fbuffer_rtrim(&file);
+	git_buf_rtrim(&file);
 
-	if (strlen(GIT_FILE_CONTENT_PREFIX) == file.len) {
-		git_futils_freebuffer(&file);
+	if (strlen(GIT_FILE_CONTENT_PREFIX) == file.size) {
+		git_buf_free(&file);
 		return git__throw(GIT_ENOTFOUND, "No path in git file `%s`", file_path);
 	}
 
 	error = git_path_prettify_dir(path_out,
-		((char *)file.data) + strlen(GIT_FILE_CONTENT_PREFIX), base_path);
+		((char *)file.ptr) + strlen(GIT_FILE_CONTENT_PREFIX), base_path);
 
-	git_futils_freebuffer(&file);
+	git_buf_free(&file);
 
 	if (error == GIT_SUCCESS && git_path_exists(path_out->ptr) == 0)
 		return GIT_SUCCESS;

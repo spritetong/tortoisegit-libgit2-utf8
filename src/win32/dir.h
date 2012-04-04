@@ -24,6 +24,8 @@ typedef struct {
 
 extern git__DIR *git__opendir(const char *);
 extern struct git__dirent *git__readdir(git__DIR *);
+extern int git__readdir_ext(
+	git__DIR *, struct git__dirent *, struct git__dirent **, int *);
 extern void git__rewinddir(git__DIR *);
 extern int git__closedir(git__DIR *);
 
@@ -32,6 +34,7 @@ extern int git__closedir(git__DIR *);
 #	define DIR git__DIR
 #	define opendir	git__opendir
 #	define readdir	git__readdir
+#   define readdir_r(d,e,r) git__readdir_ext((d),(e),(r),NULL)
 #	define rewinddir git__rewinddir
 #	define closedir git__closedir
 # endif

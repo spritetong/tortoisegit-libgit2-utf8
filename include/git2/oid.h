@@ -119,7 +119,7 @@ GIT_EXTERN(char *) git_oid_allocfmt(const git_oid *oid);
  * @return the out buffer pointer, assuming no input parameter
  *			errors, otherwise a pointer to an empty string.
  */
-GIT_EXTERN(char *) git_oid_to_string(char *out, size_t n, const git_oid *oid);
+GIT_EXTERN(char *) git_oid_tostr(char *out, size_t n, const git_oid *oid);
 
 /**
  * Copy an oid from one structure to another.
@@ -158,6 +158,11 @@ GIT_EXTERN(int) git_oid_ncmp(const git_oid *a, const git_oid *b, unsigned int le
  * GIT_SUCCESS in case of a match, GIT_ERROR otherwise.
  */
 GIT_EXTERN(int) git_oid_streq(const git_oid *a, const char *str);
+
+/**
+ * Check is an oid is all zeros.
+ */
+GIT_EXTERN(int) git_oid_iszero(const git_oid *a);
 
 /**
  * OID Shortener object
