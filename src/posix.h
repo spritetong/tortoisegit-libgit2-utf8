@@ -42,7 +42,7 @@ extern int p_write(git_file fd, const void *buf, size_t cnt);
 #define p_close(fd) close(fd)
 #define p_umask(m) umask(m)
 
-extern int p_open(const char *path, int flags);
+extern int p_open(const char *path, int flags, ...);
 extern int p_creat(const char *path, mode_t mode);
 extern int p_getcwd(char *buffer_out, size_t size);
 extern int p_rename(const char *from, const char *to);
@@ -54,6 +54,14 @@ extern int p_rename(const char *from, const char *to);
 #define p_rmdir(p) rmdir(p)
 #define p_chmod(p,m) chmod(p, m)
 #define p_access(p,m) access(p,m)
+#define p_recv(s,b,l,f) recv(s,b,l,f)
+#define p_send(s,b,l,f) send(s,b,l,f)
+typedef int GIT_SOCKET;
+#define INVALID_SOCKET -1
+
+#else
+
+typedef SOCKET GIT_SOCKET;
 
 #endif
 

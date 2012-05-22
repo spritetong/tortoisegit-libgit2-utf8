@@ -39,7 +39,9 @@ enum {
 	GIT_DIFF_IGNORE_SUBMODULES = (1 << 5),
 	GIT_DIFF_PATIENCE = (1 << 6),
 	GIT_DIFF_INCLUDE_IGNORED = (1 << 7),
-	GIT_DIFF_INCLUDE_UNTRACKED = (1 << 8)
+	GIT_DIFF_INCLUDE_UNTRACKED = (1 << 8),
+	GIT_DIFF_INCLUDE_UNMODIFIED = (1 << 9),
+	GIT_DIFF_RECURSE_UNTRACKED_DIRS = (1 << 10),
 };
 
 /**
@@ -152,19 +154,22 @@ typedef int (*git_diff_hunk_fn)(
  * Line origin constants.
  *
  * These values describe where a line came from and will be passed to
- * the git_diff_line_fn when iterating over a diff.  There are some
- * special origin contants at the end that are used for the text
+ * the git_diff_data_fn when iterating over a diff.  There are some
+ * special origin constants at the end that are used for the text
  * output callbacks to demarcate lines that are actually part of
  * the file or hunk headers.
  */
 enum {
-	/* these values will be sent to `git_diff_line_fn` along with the line */
+	/* these values will be sent to `git_diff_data_fn` along with the line */
 	GIT_DIFF_LINE_CONTEXT   = ' ',
 	GIT_DIFF_LINE_ADDITION  = '+',
 	GIT_DIFF_LINE_DELETION  = '-',
 	GIT_DIFF_LINE_ADD_EOFNL = '\n', /**< LF was added at end of file */
 	GIT_DIFF_LINE_DEL_EOFNL = '\0', /**< LF was removed at end of file */
-	/* these values will only be sent to a `git_diff_output_fn` */
+	/* these values will only be sent to a `git_diff_data_fn` when the content
+	 * of a diff is being formatted (eg. through git_diff_print_patch() or
+	 * git_diff_print_compact(), for instance).
+	 */
 	GIT_DIFF_LINE_FILE_HDR  = 'F',
 	GIT_DIFF_LINE_HUNK_HDR  = 'H',
 	GIT_DIFF_LINE_BINARY    = 'B'
@@ -172,25 +177,19 @@ enum {
 
 /**
  * When iterating over a diff, callback that will be made per text diff
- * line.
- */
-typedef int (*git_diff_line_fn)(
-	void *cb_data,
-	git_diff_delta *delta,
-	char line_origin, /**< GIT_DIFF_LINE_... value from above */
-	const char *content,
-	size_t content_len);
-
-/**
+ * line. In this context, the provided range will be NULL.
+ *
  * When printing a diff, callback that will be made to output each line
  * of text.  This uses some extra GIT_DIFF_LINE_... constants for output
  * of lines of file and hunk headers.
  */
-typedef int (*git_diff_output_fn)(
+typedef int (*git_diff_data_fn)(
 	void *cb_data,
+	git_diff_delta *delta,
+	git_diff_range *range,
 	char line_origin, /**< GIT_DIFF_LINE_... value from above */
-	const char *formatted_output);
-
+	const char *content,
+	size_t content_len);
 
 /** @name Diff List Generator Functions
  *
@@ -309,7 +308,7 @@ GIT_EXTERN(int) git_diff_foreach(
 	void *cb_data,
 	git_diff_file_fn file_cb,
 	git_diff_hunk_fn hunk_cb,
-	git_diff_line_fn line_cb);
+	git_diff_data_fn line_cb);
 
 /**
  * Iterate over a diff generating text output like "git diff --name-status".
@@ -317,7 +316,7 @@ GIT_EXTERN(int) git_diff_foreach(
 GIT_EXTERN(int) git_diff_print_compact(
 	git_diff_list *diff,
 	void *cb_data,
-	git_diff_output_fn print_cb);
+	git_diff_data_fn print_cb);
 
 /**
  * Iterate over a diff generating text output like "git diff".
@@ -327,7 +326,7 @@ GIT_EXTERN(int) git_diff_print_compact(
 GIT_EXTERN(int) git_diff_print_patch(
 	git_diff_list *diff,
 	void *cb_data,
-	git_diff_output_fn print_cb);
+	git_diff_data_fn print_cb);
 
 /**@}*/
 
@@ -338,14 +337,23 @@ GIT_EXTERN(int) git_diff_print_patch(
 
 /**
  * Directly run a text diff on two blobs.
+ *
+ * Compared to a file, a blob lacks some contextual information. As such, the
+ * `git_diff_file` parameters of the callbacks will be filled accordingly to the following:
+ * `mode` will be set to 0, `path` will be set to NULL. When dealing with a NULL blob, `oid`
+ * will be set to 0.
+ *
+ * When at least one of the blobs being dealt with is binary, the `git_diff_delta` binary
+ * attribute will be set to 1 and no call to the hunk_cb nor line_cb will be made.
  */
 GIT_EXTERN(int) git_diff_blobs(
 	git_blob *old_blob,
 	git_blob *new_blob,
 	git_diff_options *options,
 	void *cb_data,
+	git_diff_file_fn file_cb,
 	git_diff_hunk_fn hunk_cb,
-	git_diff_line_fn line_cb);
+	git_diff_data_fn line_cb);
 
 GIT_END_DECL
 

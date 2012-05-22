@@ -37,7 +37,7 @@ static git_transport_cb transport_find_fn(const char *url)
 	}
 
 	/* still here? Check to see if the path points to a file on the local file system */
-	if ((git_path_exists(url) == GIT_SUCCESS) && git_path_isdir(url))
+	if ((git_path_exists(url) == 0) && git_path_isdir(url))
 		return &git_transport_local;
 
 	/* It could be a SSH remote path. Check to see if there's a : */
@@ -54,7 +54,8 @@ static git_transport_cb transport_find_fn(const char *url)
 int git_transport_dummy(git_transport **transport)
 {
 	GIT_UNUSED(transport);
-	return git__throw(GIT_ENOTIMPLEMENTED, "This protocol isn't implemented. Sorry");
+	giterr_set(GITERR_NET, "This transport isn't implemented. Sorry");
+	return -1;
 }
 
 int git_transport_new(git_transport **out, const char *url)
@@ -65,20 +66,21 @@ int git_transport_new(git_transport **out, const char *url)
 
 	fn = transport_find_fn(url);
 
-	if (fn == NULL)
-		return git__throw(GIT_EINVALIDARGS, "Unsupported URL or non-existent path");
+	if (fn == NULL) {
+		giterr_set(GITERR_NET, "Unsupported URL protocol");
+		return -1;
+	}
 
 	error = fn(&transport);
-	if (error < GIT_SUCCESS)
-		return git__rethrow(error, "Failed to create new transport");
+	if (error < 0)
+		return error;
 
 	transport->url = git__strdup(url);
-	if (transport->url == NULL)
-		return GIT_ENOMEM;
+	GITERR_CHECK_ALLOC(transport->url);
 
 	*out = transport;
 
-	return GIT_SUCCESS;
+	return 0;
 }
 
 /* from remote.h */

@@ -8,13 +8,14 @@
 #define INCLUDE_posix__w32_h__
 
 #include "common.h"
-#include "fnmatch.h"
+#include "compat/fnmatch.h"
 #include "utf-conv.h"
 
-GIT_INLINE(int) p_link(const char *old, const char *new)
+/* For UTF-8. Fix C++ compilation bugs. Changed by Sprite Tong, 5/22/2012. */
+GIT_INLINE(int) p_link(const char *old, const char *newname)
 {
 	GIT_UNUSED(old);
-	GIT_UNUSED(new);
+	GIT_UNUSED(newname);
 	errno = ENOSYS;
 	return -1;
 }
@@ -45,9 +46,11 @@ extern int p_chmod(const char* path, mode_t mode);
 extern int p_rmdir(const char* path);
 extern int p_access(const char* path, mode_t mode);
 extern int p_fsync(int fd);
-extern int p_open(const char *path, int flags);
+extern int p_open(const char *path, int flags, ...);
 extern int p_creat(const char *path, mode_t mode);
 extern int p_getcwd(char *buffer_out, size_t size);
 extern int p_rename(const char *from, const char *to);
+extern int p_recv(GIT_SOCKET socket, void *buffer, size_t length, int flags);
+extern int p_send(GIT_SOCKET socket, const void *buffer, size_t length, int flags);
 
 #endif

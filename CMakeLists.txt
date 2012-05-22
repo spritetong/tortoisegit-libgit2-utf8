@@ -53,6 +53,7 @@ OPTION (BUILD_SHARED_LIBS "Build Shared Library (OFF for Static)" ON)
 OPTION (THREADSAFE "Build libgit2 as threadsafe" OFF)
 OPTION (BUILD_CLAR "Build Tests using the Clar suite" ON)
 OPTION (TAGS "Generate tags" OFF)
+OPTION (PROFILE "Generate profiling information" OFF)
 
 # Platform specific compilation flags
 IF (MSVC)
@@ -69,10 +70,14 @@ IF (MSVC)
 
    # Precompiled headers
 ELSE ()
-	SET(CMAKE_C_FLAGS "-O2 -g -D_GNU_SOURCE -Wall -Wextra -Wno-missing-field-initializers -Wstrict-aliasing=2 -Wstrict-prototypes -Wmissing-prototypes ${CMAKE_C_FLAGS}")
+	SET(CMAKE_C_FLAGS "-O2 -g -D_GNU_SOURCE -fvisibility=hidden -Wall -Wextra -Wno-missing-field-initializers -Wstrict-aliasing=2 -Wstrict-prototypes -Wmissing-prototypes ${CMAKE_C_FLAGS}")
 	SET(CMAKE_C_FLAGS_DEBUG "-O0 -g")
 	IF (NOT MINGW) # MinGW always does PIC and complains if we tell it to
 		SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+	ENDIF ()
+	IF (PROFILE)
+		SET(CMAKE_C_FLAGS "-pg ${CMAKE_C_FLAGS}")
+		SET(CMAKE_EXE_LINKER_FLAGS "-pg ${CMAKE_EXE_LINKER_FLAGS}")
 	ENDIF ()
 ENDIF()
 
@@ -96,8 +101,10 @@ FILE(GLOB SRC_H include/git2/*.h)
 
 # On Windows use specific platform sources
 IF (WIN32 AND NOT CYGWIN)
-	ADD_DEFINITIONS(-DWIN32 -D_DEBUG)
-	FILE(GLOB SRC src/*.c src/transports/*.c src/xdiff/*.c src/win32/*.c)
+	ADD_DEFINITIONS(-DWIN32 -D_DEBUG -D_WIN32_WINNT=0x0501)
+	FILE(GLOB SRC src/*.c src/transports/*.c src/xdiff/*.c src/win32/*.c src/compat/*.c)
+ELSEIF (CMAKE_SYSTEM_NAME MATCHES "(Solaris|SunOS)")
+	FILE(GLOB SRC src/*.c src/transports/*.c src/xdiff/*.c src/unix/*.c src/compat/*.c)
 ELSE()
 	FILE(GLOB SRC src/*.c src/transports/*.c src/xdiff/*.c src/unix/*.c)
 ENDIF ()

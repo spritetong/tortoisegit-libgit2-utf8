@@ -50,10 +50,10 @@ static void files_are_equal(const char *a, const char *b)
 	git_buf buf_b = GIT_BUF_INIT;
 	int pass;
 
-	if (git_futils_readbuffer(&buf_a, a) < GIT_SUCCESS)
+	if (git_futils_readbuffer(&buf_a, a) < 0)
 		cl_assert(0);
 
-	if (git_futils_readbuffer(&buf_b, b) < GIT_SUCCESS) {
+	if (git_futils_readbuffer(&buf_b, b) < 0) {
 		git_buf_free(&buf_a);
 		cl_assert(0);
 	}
@@ -62,6 +62,8 @@ static void files_are_equal(const char *a, const char *b)
 
 	git_buf_free(&buf_a);
 	git_buf_free(&buf_b);
+
+	cl_assert(pass);
 }
 
 
@@ -105,7 +107,7 @@ void test_index_tests__default_test_index(void)
    for (i = 0; i < ARRAY_SIZE(test_entries); ++i) {
       git_index_entry *e = entries[test_entries[i].index];
 
-      cl_assert_strequal(e->path, test_entries[i].path);
+      cl_assert_equal_s(e->path, test_entries[i].path);
       cl_assert(e->mtime.seconds == test_entries[i].mtime);
       cl_assert(e->file_size == test_entries[i].file_size);
    }

@@ -11,6 +11,7 @@ typedef struct {
 	int file_mods;
 	int file_ignored;
 	int file_untracked;
+	int file_unmodified;
 
 	int hunks;
 	int hunk_new_lines;
@@ -20,6 +21,8 @@ typedef struct {
 	int line_ctxt;
 	int line_adds;
 	int line_dels;
+
+	bool at_least_one_of_them_is_binary;
 } diff_expects;
 
 extern int diff_file_fn(
@@ -37,6 +40,7 @@ extern int diff_hunk_fn(
 extern int diff_line_fn(
 	void *cb_data,
 	git_diff_delta *delta,
+	git_diff_range *range,
 	char line_origin,
 	const char *content,
 	size_t content_len);
