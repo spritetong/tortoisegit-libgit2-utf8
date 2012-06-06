@@ -88,6 +88,7 @@ typedef enum {
 	GITERR_TAG,
 	GITERR_TREE,
 	GITERR_INDEXER,
+	GITERR_SSL,
 /* For UTF-8. Fix compilation bugs. Changed by Sprite Tong, 5/22/2012. */
 #ifndef __XUTF8_ENABLED__
 } git_error_t;
