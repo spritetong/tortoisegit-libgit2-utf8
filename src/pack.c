@@ -262,7 +262,7 @@ int git_packfile_unpack_header(
 	if (base == NULL)
 		return GIT_EBUFS;
 
-	ret = packfile_unpack_header1(&used, size_p, type_p, base, left);
+		ret = packfile_unpack_header1(&used, size_p, type_p, base, left);
 	git_mwindow_close(w_curs);
 	if (ret == GIT_EBUFS)
 		return ret;
@@ -535,6 +535,7 @@ void packfile_free(struct git_pack_file *p)
 
 	/* clear_delta_base_cache(); */
 	git_mwindow_free_all(&p->mwf);
+	git_mwindow_file_deregister(&p->mwf);
 
 	if (p->mwf.fd != -1)
 		p_close(p->mwf.fd);

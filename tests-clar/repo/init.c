@@ -166,14 +166,25 @@ void test_repo_init__additional_templates(void)
 	git_buf_free(&path);
 }
 
-static void assert_config_entry_on_init(const char *config_key, int expected_value)
+static void assert_config_entry_on_init_bytype(const char *config_key, int expected_value, bool is_bare)
 {
 	git_config *config;
 	int current_value;
+	git_buf repo_path = GIT_BUF_INIT;
 
 	cl_set_cleanup(&cleanup_repository, "config_entry");
-	
-	cl_git_pass(git_repository_init(&_repo, "config_entry/test.git", 1));
+
+	cl_git_pass(git_buf_puts(&repo_path, "config_entry/test."));
+
+	if (!is_bare)
+		cl_git_pass(git_buf_puts(&repo_path, "non."));
+
+	cl_git_pass(git_buf_puts(&repo_path, "bare.git"));
+
+	cl_git_pass(git_repository_init(&_repo, git_buf_cstr(&repo_path), is_bare));
+
+	git_buf_free(&repo_path);
+
 	git_repository_config(&config, _repo);
 
 	if (expected_value >= 0) {
@@ -187,6 +198,14 @@ static void assert_config_entry_on_init(const char *config_key, int expected_val
 	}
 
 	git_config_free(config);
+}
+
+static void assert_config_entry_on_init(const char *config_key, int expected_value)
+{
+	assert_config_entry_on_init_bytype(config_key, expected_value, true);
+	git_repository_free(_repo);
+
+	assert_config_entry_on_init_bytype(config_key, expected_value, false);
 }
 
 void test_repo_init__detect_filemode(void)
@@ -215,16 +234,18 @@ void test_repo_init__reinit_doesnot_overwrite_ignorecase(void)
 	int current_value;
 
 	/* Init a new repo */
-	test_repo_init__detect_ignorecase();
+	cl_set_cleanup(&cleanup_repository, "not.overwrite.git");
+	cl_git_pass(git_repository_init(&_repo, "not.overwrite.git", 1));
 
 	/* Change the "core.ignorecase" config value to something unlikely */
 	git_repository_config(&config, _repo);
 	git_config_set_int32(config, "core.ignorecase", 42);
 	git_config_free(config);
 	git_repository_free(_repo);
+	_repo = NULL;
 
 	/* Reinit the repository */
-	cl_git_pass(git_repository_init(&_repo, "config_entry/test.git", 1));
+	cl_git_pass(git_repository_init(&_repo, "not.overwrite.git", 1));
 	git_repository_config(&config, _repo);
 
 	/* Ensure the "core.ignorecase" config value hasn't been updated */
@@ -232,4 +253,45 @@ void test_repo_init__reinit_doesnot_overwrite_ignorecase(void)
 	cl_assert_equal_i(42, current_value);
 
 	git_config_free(config);
+}
+
+void test_repo_init__reinit_overwrites_filemode(void)
+{
+    git_config *config;
+    int expected, current_value;
+
+#ifdef GIT_WIN32
+    expected = false;
+#else
+    expected = true;
+#endif
+
+    /* Init a new repo */
+    cl_set_cleanup(&cleanup_repository, "overwrite.git");
+    cl_git_pass(git_repository_init(&_repo, "overwrite.git", 1));
+
+
+    /* Change the "core.filemode" config value to something unlikely */
+    git_repository_config(&config, _repo);
+    git_config_set_bool(config, "core.filemode", !expected);
+    git_config_free(config);
+    git_repository_free(_repo);
+    _repo = NULL;
+
+    /* Reinit the repository */
+    cl_git_pass(git_repository_init(&_repo, "overwrite.git", 1));
+    git_repository_config(&config, _repo);
+
+    /* Ensure the "core.filemode" config value has been reset */
+    cl_git_pass(git_config_get_bool(&current_value, config, "core.filemode"));
+    cl_assert_equal_i(expected, current_value);
+
+    git_config_free(config);
+}
+
+void test_repo_init__sets_logAllRefUpdates_according_to_type_of_repository(void)
+{
+	assert_config_entry_on_init_bytype("core.logallrefupdates", GIT_ENOTFOUND, true);
+	git_repository_free(_repo);
+	assert_config_entry_on_init_bytype("core.logallrefupdates", true, false);
 }

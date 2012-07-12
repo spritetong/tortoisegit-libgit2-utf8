@@ -17,6 +17,10 @@
 #include <stdio.h>
 #include <ctype.h>
 
+#ifdef GIT_WIN32
+#define LOOKS_LIKE_DRIVE_PREFIX(S) (git__isalpha((S)[0]) && (S)[1] == ':')
+#endif
+
 /*
  * Based on the Android implementation, BSD licensed.
  * Check http://android.git.kernel.org/
@@ -105,7 +109,7 @@ int git_path_dirname_r(git_buf *buffer, const char *path)
 	/* Mimic unix behavior where '/.git' returns '/': 'C:/.git' will return
 		'C:/' here */
 
-	if (len == 2 && isalpha(path[0]) && path[1] == ':') {
+	if (len == 2 && LOOKS_LIKE_DRIVE_PREFIX(path)) {
 		len = 3;
 		goto Exit;
 	}
@@ -170,7 +174,7 @@ int git_path_root(const char *path)
 
 #ifdef GIT_WIN32
 	/* Does the root of the path look like a windows drive ? */
-	if (isalpha(path[0]) && (path[1] == ':'))
+	if (LOOKS_LIKE_DRIVE_PREFIX(path))
 		offset += 2;
 
 	/* Are we dealing with a windows network path? */
@@ -210,7 +214,7 @@ int git_path_prettify(git_buf *path_out, const char *path, const char *base)
 		giterr_set(GITERR_OS, "Failed to resolve path '%s'", path);
 
 		git_buf_clear(path_out);
-		
+
 		return error;
 	}
 
@@ -464,19 +468,24 @@ int git_path_cmp(
 	const char *name1, size_t len1, int isdir1,
 	const char *name2, size_t len2, int isdir2)
 {
+	unsigned char c1, c2;
 	size_t len = len1 < len2 ? len1 : len2;
 	int cmp;
 
 	cmp = memcmp(name1, name2, len);
 	if (cmp)
 		return cmp;
-	if (len1 < len2)
-		return (!isdir1 && !isdir2) ? -1 :
-			(isdir1 ? '/' - name2[len1] : name2[len1] - '/');
-	if (len1 > len2)
-		return (!isdir1 && !isdir2) ? 1 :
-			(isdir2 ? name1[len2] - '/' : '/' - name1[len2]);
-	return 0;
+
+	c1 = name1[len];
+	c2 = name2[len];
+
+	if (c1 == '\0' && isdir1)
+		c1 = '/';
+
+	if (c2 == '\0' && isdir2)
+		c2 = '/';
+
+	return (c1 < c2) ? -1 : (c1 > c2) ? 1 : 0;
 }
 
 /* Taken from git.git */
@@ -506,7 +515,7 @@ int git_path_direach(
 		return -1;
 	}
 
-#ifdef __sun
+#if defined(__sun) || defined(__GNU__)
 	de_buf = git__malloc(sizeof(struct dirent) + FILENAME_MAX + 1);
 #else
 	de_buf = git__malloc(sizeof(struct dirent));
@@ -560,7 +569,7 @@ int git_path_dirload(
 		return -1;
 	}
 
-#ifdef __sun
+#if defined(__sun) || defined(__GNU__)
 	de_buf = git__malloc(sizeof(struct dirent) + FILENAME_MAX + 1);
 #else
 	de_buf = git__malloc(sizeof(struct dirent));

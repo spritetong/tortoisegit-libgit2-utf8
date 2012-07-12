@@ -28,9 +28,10 @@ void cl_git_mkfile(const char *filename, const char *content)
 	cl_must_pass(p_close(fd));
 }
 
-void cl_git_write2file(const char *filename, const char *new_content, int flags)
+void cl_git_write2file(
+	const char *filename, const char *new_content, int flags, unsigned int mode)
 {
-	int fd = p_open(filename, flags, 0644);
+	int fd = p_open(filename, flags, mode);
 	cl_assert(fd >= 0);
 	if (!new_content)
 		new_content = "\n";
@@ -40,13 +41,69 @@ void cl_git_write2file(const char *filename, const char *new_content, int flags)
 
 void cl_git_append2file(const char *filename, const char *new_content)
 {
-	cl_git_write2file(filename, new_content, O_WRONLY | O_CREAT | O_APPEND);
+	cl_git_write2file(filename, new_content, O_WRONLY | O_CREAT | O_APPEND, 0644);
 }
 
 void cl_git_rewritefile(const char *filename, const char *new_content)
 {
-	cl_git_write2file(filename, new_content, O_WRONLY | O_CREAT | O_TRUNC);
+	cl_git_write2file(filename, new_content, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 }
+
+#ifdef GIT_WIN32
+
+#include "win32/utf-conv.h"
+
+char *cl_getenv(const char *name)
+{
+	wchar_t *name_utf16 = gitwin_to_utf16(name);
+	DWORD value_len, alloc_len;
+	wchar_t *value_utf16;
+	char *value_utf8;
+
+	cl_assert(name_utf16);
+	alloc_len = GetEnvironmentVariableW(name_utf16, NULL, 0);
+	if (alloc_len <= 0)
+		return NULL;
+
+	cl_assert(value_utf16 = git__calloc(alloc_len, sizeof(wchar_t)));
+
+	value_len = GetEnvironmentVariableW(name_utf16, value_utf16, alloc_len);
+	cl_assert_equal_i(value_len, alloc_len - 1);
+
+	cl_assert(value_utf8 = gitwin_from_utf16(value_utf16));
+
+	git__free(value_utf16);
+
+	return value_utf8;
+}
+
+int cl_setenv(const char *name, const char *value)
+{
+	wchar_t *name_utf16 = gitwin_to_utf16(name);
+	wchar_t *value_utf16 = value ? gitwin_to_utf16(value) : NULL;
+
+	cl_assert(name_utf16);
+	cl_assert(SetEnvironmentVariableW(name_utf16, value_utf16));
+
+	git__free(name_utf16);
+	git__free(value_utf16);
+
+	return 0;
+
+}
+#else
+
+#include <stdlib.h>
+char *cl_getenv(const char *name)
+{
+   return getenv(name);
+}
+
+int cl_setenv(const char *name, const char *value)
+{
+	return (value == NULL) ? unsetenv(name) : setenv(name, value, 1);
+}
+#endif
 
 static const char *_cl_sandbox = NULL;
 static git_repository *_cl_repo = NULL;
@@ -98,3 +155,28 @@ void cl_git_sandbox_cleanup(void)
 		_cl_sandbox = NULL;
 	}
 }
+
+bool cl_toggle_filemode(const char *filename)
+{
+	struct stat st1, st2;
+
+	cl_must_pass(p_stat(filename, &st1));
+	cl_must_pass(p_chmod(filename, st1.st_mode ^ 0100));
+	cl_must_pass(p_stat(filename, &st2));
+
+	return (st1.st_mode != st2.st_mode);
+}
+
+bool cl_is_chmod_supported(void)
+{
+	static int _is_supported = -1;
+
+	if (_is_supported < 0) {
+		cl_git_mkfile("filemode.t", "Test if filemode can be modified");
+		_is_supported = cl_toggle_filemode("filemode.t");
+		cl_must_pass(p_unlink("filemode.t"));
+	}
+
+	return _is_supported;
+}
+

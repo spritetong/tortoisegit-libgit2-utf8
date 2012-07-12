@@ -204,6 +204,11 @@ GIT_INLINE(bool) git__isalpha(int c)
     return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
 }
 
+GIT_INLINE(bool) git__isdigit(int c)
+{
+    return (c >= '0' && c <= '9');
+}
+
 GIT_INLINE(bool) git__isspace(int c)
 {
     return (c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == '\v');
@@ -222,5 +227,15 @@ GIT_INLINE(bool) git__iswildcard(int c)
  * Valid values for false are: 'false', 'no', 'off'
  */
 extern int git__parse_bool(int *out, const char *value);
+
+/*
+ * Parse a string into a value as a git_time_t.
+ *
+ * Sample valid input:
+ * - "yesterday"
+ * - "July 17, 2003"
+ * - "2003-7-17 08:23"
+ */
+int git__date_parse(git_time_t *out, const char *date);
 
 #endif /* INCLUDE_util_h__ */

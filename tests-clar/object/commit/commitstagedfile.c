@@ -23,6 +23,7 @@ void test_object_commit_commitstagedfile__generate_predictable_object_ids(void)
 	git_oid expected_blob_oid, tree_oid, expected_tree_oid, commit_oid, expected_commit_oid;
 	git_signature *signature;
 	git_tree *tree;
+	char buffer[128];
 
 	/*
 	 * The test below replicates the following git scenario
@@ -107,6 +108,9 @@ void test_object_commit_commitstagedfile__generate_predictable_object_ids(void)
 	 */
 	cl_git_pass(git_signature_new(&signature, "nulltoken", "emeric.fermas@gmail.com", 1323847743, 60));
 	cl_git_pass(git_tree_lookup(&tree, repo, &tree_oid));
+
+	cl_git_pass(git_message_prettify(buffer, 128, "Initial commit", 0));
+
 	cl_git_pass(git_commit_create_v(
 		&commit_oid,
 		repo,
@@ -114,7 +118,7 @@ void test_object_commit_commitstagedfile__generate_predictable_object_ids(void)
 		signature,
 		signature,
 		NULL,
-		"Initial commit",
+		buffer,
 		tree,
 		0));
 

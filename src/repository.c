@@ -573,6 +573,9 @@ int git_repository_index__weakptr(git_index **out, git_repository *repo)
 			return -1;
 
 		GIT_REFCOUNT_OWN(repo->_index, repo);
+
+		if (git_index_set_caps(repo->_index, GIT_INDEXCAP_FROM_OWNER) < 0)
+			return -1;
 	}
 
 	*out = repo->_index;
@@ -599,13 +602,9 @@ void git_repository_set_index(git_repository *repo, git_index *index)
 	GIT_REFCOUNT_INC(index);
 }
 
-static int check_repositoryformatversion(git_repository *repo)
+static int check_repositoryformatversion(git_config *config)
 {
-	git_config *config;
 	int version;
-
-	if (git_repository_config__weakptr(&config, repo) < 0)
-		return -1;
 
 	if (git_config_get_int32(&version, config, "core.repositoryformatversion") < 0)
 		return -1;
@@ -617,26 +616,6 @@ static int check_repositoryformatversion(git_repository *repo)
 		return -1;
 	}
 
-	return 0;
-}
-
-static int repo_init_reinit(git_repository **repo_out, const char *repository_path, int is_bare)
-{
-	git_repository *repo = NULL;
-
-	GIT_UNUSED(is_bare);
-
-	if (git_repository_open(&repo, repository_path) < 0)
-		return -1;
-
-	if (check_repositoryformatversion(repo) < 0) {
-		git_repository_free(repo);
-		return -1;
-	}
-
-	/* TODO: reinitialize the templates */
-
-	*repo_out = repo;
 	return 0;
 }
 
@@ -714,10 +693,19 @@ static int repo_init_config(const char *git_dir, bool is_bare, bool is_reinit)
 		return -1;
 	}
 
+	if (is_reinit && check_repositoryformatversion(config) < 0) {
+		git_buf_free(&cfg_path);
+		git_config_free(config);
+		return -1;
+	}
+
 	SET_REPO_CONFIG(bool, "core.bare", is_bare);
 	SET_REPO_CONFIG(int32, "core.repositoryformatversion", GIT_REPO_VERSION);
 	SET_REPO_CONFIG(bool, "core.filemode", is_chmod_supported(git_buf_cstr(&cfg_path)));
 	
+	if (!is_bare)
+		SET_REPO_CONFIG(bool, "core.logallrefupdates", true);
+
 	if (!is_reinit && is_filesystem_case_insensitive(git_dir))
 		SET_REPO_CONFIG(bool, "core.ignorecase", true);
 	/* TODO: what other defaults? */
@@ -844,20 +832,18 @@ int git_repository_init(git_repository **repo_out, const char *path, unsigned is
 	is_reinit = git_path_isdir(repository_path.ptr) && valid_repository_path(&repository_path);
 
 	if (is_reinit) {
-		if (repo_init_reinit(repo_out, repository_path.ptr, is_bare) < 0)
+		/* TODO: reinitialize the templates */
+
+		if (repo_init_config(repository_path.ptr, is_bare, is_reinit) < 0)
 			goto cleanup;
 
-		result = repo_init_config(repository_path.ptr, is_bare, is_reinit);
-	}
-
-	if (repo_init_structure(repository_path.ptr, is_bare) < 0 ||
+	} else if (repo_init_structure(repository_path.ptr, is_bare) < 0 ||
 		repo_init_config(repository_path.ptr, is_bare, is_reinit) < 0 || 
-		repo_init_createhead(repository_path.ptr) < 0 ||
-		git_repository_open(repo_out, repository_path.ptr) < 0) {
+		repo_init_createhead(repository_path.ptr) < 0) {
 		goto cleanup;
 	}
 
-	result = 0;
+	result = git_repository_open(repo_out, repository_path.ptr);
 
 cleanup:
 	git_buf_free(&repository_path);

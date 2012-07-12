@@ -142,7 +142,7 @@ int git_indexer_stream_new(git_indexer_stream **out, const char *prefix)
 {
 	git_indexer_stream *idx;
 	git_buf path = GIT_BUF_INIT;
-	static const char suff[] = "/objects/pack/pack-received";
+	static const char suff[] = "/pack";
 	int error;
 
 	idx = git__calloc(1, sizeof(git_indexer_stream));
@@ -292,10 +292,12 @@ int git_indexer_stream_add(git_indexer_stream *idx, const void *data, size_t siz
 {
 	int error;
 	struct git_pack_header hdr;
-	size_t processed = stats->processed;
+	size_t processed; 
 	git_mwindow_file *mwf = &idx->pack->mwf;
 
 	assert(idx && data && stats);
+
+	processed = stats->processed;
 
 	if (git_filebuf_write(&idx->pack_file, data, size) < 0)
 		return -1;
@@ -311,8 +313,6 @@ int git_indexer_stream_add(git_indexer_stream *idx, const void *data, size_t siz
 		mwf = &idx->pack->mwf;
 		if (git_mwindow_file_register(&idx->pack->mwf) < 0)
 			return -1;
-
-		return 0;
 	}
 
 	if (!idx->parsed_header) {
@@ -363,11 +363,11 @@ int git_indexer_stream_add(git_indexer_stream *idx, const void *data, size_t siz
 		if (error < 0) {
 			idx->off = entry_start;
 			error = store_delta(idx);
+
 			if (error == GIT_EBUFS)
 				return 0;
 			if (error < 0)
 				return error;
-
 			continue;
 		}
 
@@ -773,6 +773,7 @@ int git_indexer_write(git_indexer *idx)
 
 cleanup:
 	git_mwindow_free_all(&idx->pack->mwf);
+	git_mwindow_file_deregister(&idx->pack->mwf);
 	if (error < 0)
 		git_filebuf_cleanup(&idx->file);
 	git_buf_free(&filename);
@@ -886,6 +887,7 @@ void git_indexer_free(git_indexer *idx)
 		return;
 
 	p_close(idx->pack->mwf.fd);
+	git_mwindow_file_deregister(&idx->pack->mwf);
 	git_vector_foreach(&idx->objects, i, e)
 		git__free(e);
 	git_vector_free(&idx->objects);

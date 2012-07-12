@@ -312,7 +312,7 @@ static const char *expected_index_oids_0[] = {
 	"45141a79a77842c59a63229403220a4e4be74e3d",
 	"4d713dc48e6b1bd75b0d61ad078ba9ca3a56745d",
 	"108bb4e7fd7b16490dc33ff7d972151e73d7166e",
-	"fe773770c5a6cc7185580c9204b1ff18a33ff3fc",
+	"a0f7217ae99f5ac3e88534f5cea267febc5fa85b",
 	"3e42ffc54a663f9401cc25843d6c0e71a33e4249",
 	"45b983be36b73c0788dc9cbcb76cbb80fc7bb057",
 	"45b983be36b73c0788dc9cbcb76cbb80fc7bb057",
@@ -343,7 +343,7 @@ static const char *expected_index_oids_range[] = {
 	"45141a79a77842c59a63229403220a4e4be74e3d",
 	"4d713dc48e6b1bd75b0d61ad078ba9ca3a56745d",
 	"108bb4e7fd7b16490dc33ff7d972151e73d7166e",
-	"fe773770c5a6cc7185580c9204b1ff18a33ff3fc",
+	"a0f7217ae99f5ac3e88534f5cea267febc5fa85b",
 };
 
 void test_diff_iterator__index_range(void)
@@ -474,13 +474,14 @@ static const char *status_paths[] = {
 	"subdir/current_file",
 	"subdir/modified_file",
 	"subdir/new_file",
+	"\xe8\xbf\x99",
 	NULL
 };
 
 void test_diff_iterator__workdir_1(void)
 {
 	workdir_iterator_test(
-		"status", NULL, NULL, 12, 1, status_paths, "ignored_file");
+		"status", NULL, NULL, 13, 1, status_paths, "ignored_file");
 }
 
 static const char *status_paths_range_0[] = {
@@ -527,13 +528,14 @@ static const char *status_paths_range_4[] = {
 	"subdir/current_file",
 	"subdir/modified_file",
 	"subdir/new_file",
+	"\xe8\xbf\x99",
 	NULL
 };
 
 void test_diff_iterator__workdir_1_ranged_4(void)
 {
 	workdir_iterator_test(
-		"status", "subdir/", NULL, 3, 0, status_paths_range_4, NULL);
+		"status", "subdir/", NULL, 4, 0, status_paths_range_4, NULL);
 }
 
 static const char *status_paths_range_5[] = {
@@ -551,7 +553,7 @@ void test_diff_iterator__workdir_1_ranged_5(void)
 void test_diff_iterator__workdir_1_ranged_empty_0(void)
 {
 	workdir_iterator_test(
-		"status", "z_does_not_exist", NULL,
+		"status", "\xff_does_not_exist", NULL,
 		0, 0, NULL, NULL);
 }
 

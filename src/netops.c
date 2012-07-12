@@ -12,7 +12,6 @@
 #	include <netdb.h>
 #       include <arpa/inet.h>
 #else
-#	include <winsock2.h>
 #	include <ws2tcpip.h>
 #	ifdef _MSC_VER
 #		pragma comment(lib, "ws2_32.lib")
@@ -144,7 +143,9 @@ void gitno_consume_n(gitno_buffer *buf, size_t cons)
 
 int gitno_ssl_teardown(git_transport *t)
 {
-	int ret = ret;
+#ifdef GIT_SSL
+	int ret;
+#endif
 
 	if (!t->encrypt)
 		return 0;
@@ -380,16 +381,18 @@ int gitno_connect(git_transport *t, const char *host, const char *port)
 	GIT_SOCKET s = INVALID_SOCKET;
 
 	memset(&hints, 0x0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_family = AF_UNSPEC;
 
-	if ((ret = getaddrinfo(host, port, &hints, &info)) < 0) {
-		giterr_set(GITERR_NET, "Failed to resolve address for %s: %s", host, gai_strerror(ret));
+	if ((ret = p_getaddrinfo(host, port, &hints, &info)) < 0) {
+		giterr_set(GITERR_NET,
+			"Failed to resolve address for %s: %s", host, p_gai_strerror(ret));
 		return -1;
 	}
 
 	for (p = info; p != NULL; p = p->ai_next) {
 		s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+
 		if (s == INVALID_SOCKET) {
 			net_set_error("error creating socket");
 			break;
@@ -410,7 +413,7 @@ int gitno_connect(git_transport *t, const char *host, const char *port)
 	}
 
 	t->socket = s;
-	freeaddrinfo(info);
+	p_freeaddrinfo(info);
 
 	if (t->encrypt && ssl_setup(t, host) < 0)
 		return -1;

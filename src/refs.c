@@ -1404,17 +1404,10 @@ int git_reference_rename(git_reference *ref, const char *new_name, int force)
 	}
 
 	/*
-	 * Rename the reflog file.
+	 * Rename the reflog file, if it exists.
 	 */
-	if (git_buf_join_n(&aux_path, '/', 3, ref->owner->path_repository, GIT_REFLOG_DIR, ref->name) < 0)
+	if ((git_reference_has_log(ref)) && (git_reflog_rename(ref, new_name) < 0))
 		goto cleanup;
-
-	if (git_path_exists(aux_path.ptr) == true) {
-		if (git_reflog_rename(ref, new_name) < 0)
-			goto cleanup;
-	} else {
-		giterr_clear();
-	}
 
 	/*
 	 * Change the name of the reference given by the user.
@@ -1705,3 +1698,116 @@ int git_reference_cmp(git_reference *ref1, git_reference *ref2)
 	return git_oid_cmp(&ref1->target.oid, &ref2->target.oid);
 }
 
+/* Update the reference named `ref_name` so it points to `oid` */
+int git_reference__update(git_repository *repo, const git_oid *oid, const char *ref_name)
+{
+	git_reference *ref;
+	int res;
+
+	res = git_reference_lookup(&ref, repo, ref_name);
+
+	/* If we haven't found the reference at all, we assume we need to create
+	 * a new reference and that's it */
+	if (res == GIT_ENOTFOUND) {
+		giterr_clear();
+		return git_reference_create_oid(NULL, repo, ref_name, oid, 1);
+	}
+
+	if (res < 0)
+		return -1;
+
+	/* If we have found a reference, but it's symbolic, we need to update
+	 * the direct reference it points to */
+	if (git_reference_type(ref) == GIT_REF_SYMBOLIC) {
+		git_reference *aux;
+		const char *sym_target;
+
+		/* The target pointed at by this reference */
+		sym_target = git_reference_target(ref);
+
+		/* resolve the reference to the target it points to */
+		res = git_reference_resolve(&aux, ref);
+
+		/*
+		 * if the symbolic reference pointed to an inexisting ref,
+		 * this is means we're creating a new branch, for example.
+		 * We need to create a new direct reference with that name
+		 */
+		if (res == GIT_ENOTFOUND) {
+			giterr_clear();
+			res = git_reference_create_oid(NULL, repo, sym_target, oid, 1);
+			git_reference_free(ref);
+			return res;
+		}
+
+		/* free the original symbolic reference now; not before because
+		 * we're using the `sym_target` pointer */
+		git_reference_free(ref);
+
+		if (res < 0)
+			return -1;
+
+		/* store the newly found direct reference in its place */
+		ref = aux;
+	}
+
+	/* ref is made to point to `oid`: ref is either the original reference,
+	 * or the target of the symbolic reference we've looked up */
+	res = git_reference_set_oid(ref, oid);
+	git_reference_free(ref);
+	return res;
+}
+
+struct glob_cb_data {
+	const char *glob;
+	int (*callback)(const char *, void *);
+	void *payload;
+};
+
+static int fromglob_cb(const char *reference_name, void *payload)
+{
+	struct glob_cb_data *data = (struct glob_cb_data *)payload;
+
+	if (!p_fnmatch(data->glob, reference_name, 0))
+		return data->callback(reference_name, data->payload);
+
+	return 0;
+}
+
+int git_reference_foreach_glob(
+	git_repository *repo,
+	const char *glob,
+	unsigned int list_flags,
+	int (*callback)(
+		const char *reference_name,
+		void *payload),
+	void *payload)
+{
+	struct glob_cb_data data;
+
+	assert(repo && glob && callback);
+
+	data.glob = glob;
+	data.callback = callback;
+	data.payload = payload;
+
+	return git_reference_foreach(
+			repo, list_flags, fromglob_cb, &data);
+}
+
+int git_reference_has_log(
+	git_reference *ref)
+{
+	git_buf path = GIT_BUF_INIT;
+	int result;
+
+	assert(ref);
+
+	if (git_buf_join_n(&path, '/', 3, ref->owner->path_repository, GIT_REFLOG_DIR, ref->name) < 0)
+		return -1;
+
+	result = git_path_isfile(git_buf_cstr(&path));
+	git_buf_free(&path);
+
+	return result;
+}

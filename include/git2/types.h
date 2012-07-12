@@ -32,6 +32,9 @@ GIT_BEGIN_DECL
  * stat() functions, for all platforms.
  */
 #include <sys/types.h>
+#ifdef __amigaos4__
+#include <stdint.h>
+#endif
 
 #if defined(_MSC_VER)
 
@@ -165,6 +168,12 @@ typedef enum {
 	GIT_BRANCH_LOCAL = 1,
 	GIT_BRANCH_REMOTE = 2,
 } git_branch_t;
+
+/** Kinds of reset operation. */
+typedef enum {
+	GIT_RESET_SOFT = 1,
+	GIT_RESET_MIXED = 2,
+} git_reset_type;
 
 typedef struct git_refspec git_refspec;
 typedef struct git_remote git_remote;
