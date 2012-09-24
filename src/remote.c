@@ -5,15 +5,16 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#include "git2/remote.h"
 #include "git2/config.h"
 #include "git2/types.h"
+#include "git2/oid.h"
 
 #include "config.h"
 #include "repository.h"
 #include "remote.h"
 #include "fetch.h"
 #include "refs.h"
+#include "pkt.h"
 
 #include <regex.h>
 
@@ -131,6 +132,26 @@ int git_remote_load(git_remote **out, git_repository *repo, const char *name)
 	GITERR_CHECK_ALLOC(remote->url);
 
 	git_buf_clear(&buf);
+	if (git_buf_printf(&buf, "remote.%s.pushurl", name) < 0) {
+		error = -1;
+		goto cleanup;
+	}
+
+	error = git_config_get_string(&val, config, git_buf_cstr(&buf));
+	if (error == GIT_ENOTFOUND)
+		error = 0;
+
+	if (error < 0) {
+		error = -1;
+		goto cleanup;
+	}
+
+	if (val) {
+		remote->pushurl = git__strdup(val);
+		GITERR_CHECK_ALLOC(remote->pushurl);
+	}
+
+	git_buf_clear(&buf);
 	if (git_buf_printf(&buf, "remote.%s.fetch", name) < 0) {
 		error = -1;
 		goto cleanup;
@@ -179,12 +200,32 @@ int git_remote_save(const git_remote *remote)
 	if (git_repository_config__weakptr(&config, remote->repo) < 0)
 		return -1;
 
-	if (git_buf_printf(&buf, "remote.%s.%s", remote->name, "url") < 0)
+	if (git_buf_printf(&buf, "remote.%s.url", remote->name) < 0)
 		return -1;
 
 	if (git_config_set_string(config, git_buf_cstr(&buf), remote->url) < 0) {
 		git_buf_free(&buf);
 		return -1;
+	}
+
+	git_buf_clear(&buf);
+	if (git_buf_printf(&buf, "remote.%s.pushurl", remote->name) < 0)
+		return -1;
+
+	if (remote->pushurl) {
+		if (git_config_set_string(config, git_buf_cstr(&buf), remote->pushurl) < 0) {
+			git_buf_free(&buf);
+			return -1;
+		}
+	} else {
+		int error = git_config_delete(config, git_buf_cstr(&buf));
+		if (error == GIT_ENOTFOUND) {
+			error = 0;
+		}
+		if (error < 0) {
+			git_buf_free(&buf);
+			return -1;
+		}
 	}
 
 	if (remote->fetch.src != NULL && remote->fetch.dst != NULL) {
@@ -238,6 +279,38 @@ const char *git_remote_url(git_remote *remote)
 	return remote->url;
 }
 
+int git_remote_set_url(git_remote *remote, const char* url)
+{
+	assert(remote);
+	assert(url);
+
+	git__free(remote->url);
+	remote->url = git__strdup(url);
+	GITERR_CHECK_ALLOC(remote->url);
+
+	return 0;
+}
+
+const char *git_remote_pushurl(git_remote *remote)
+{
+	assert(remote);
+	return remote->pushurl;
+}
+
+int git_remote_set_pushurl(git_remote *remote, const char* url)
+{
+	assert(remote);
+
+	git__free(remote->pushurl);
+	if (url) {
+		remote->pushurl = git__strdup(url);
+		GITERR_CHECK_ALLOC(remote->pushurl);
+	} else {
+		remote->pushurl = NULL;
+	}
+	return 0;
+}
+
 int git_remote_set_fetchspec(git_remote *remote, const char *spec)
 {
 	git_refspec refspec;
@@ -284,14 +357,37 @@ const git_refspec *git_remote_pushspec(git_remote *remote)
 	return &remote->push;
 }
 
+const char* git_remote__urlfordirection(git_remote *remote, int direction)
+{
+	assert(remote);
+
+	if (direction == GIT_DIR_FETCH) {
+		return remote->url;
+	}
+
+	if (direction == GIT_DIR_PUSH) {
+		return remote->pushurl ? remote->pushurl : remote->url;
+	}
+
+	return NULL;
+}
+
 int git_remote_connect(git_remote *remote, int direction)
 {
 	git_transport *t;
+	const char *url;
 
 	assert(remote);
 
-	if (git_transport_new(&t, remote->url) < 0)
+	url = git_remote__urlfordirection(remote, direction);
+	if (url == NULL )
 		return -1;
+
+	if (git_transport_new(&t, url) < 0)
+		return -1;
+
+	t->progress_cb = remote->callbacks.progress;
+	t->cb_data = remote->callbacks.data;
 
 	t->check_cert = remote->check_cert;
 	if (t->connect(t, direction) < 0) {
@@ -309,6 +405,10 @@ on_error:
 
 int git_remote_ls(git_remote *remote, git_headlist_cb list_cb, void *payload)
 {
+	git_vector *refs = &remote->transport->refs;
+	unsigned int i;
+	git_pkt *p = NULL;
+
 	assert(remote);
 
 	if (!remote->transport || !remote->transport->connected) {
@@ -316,7 +416,19 @@ int git_remote_ls(git_remote *remote, git_headlist_cb list_cb, void *payload)
 		return -1;
 	}
 
-	return remote->transport->ls(remote->transport, list_cb, payload);
+	git_vector_foreach(refs, i, p) {
+		git_pkt_ref *pkt = NULL;
+
+		if (p->type != GIT_PKT_REF)
+			continue;
+
+		pkt = (git_pkt_ref *)p;
+
+		if (list_cb(&pkt->head, payload))
+			return GIT_EUSER;
+	}
+
+	return 0;
 }
 
 int git_remote_download(git_remote *remote, git_off_t *bytes, git_indexer_stats *stats)
@@ -331,7 +443,7 @@ int git_remote_download(git_remote *remote, git_off_t *bytes, git_indexer_stats 
 	return git_fetch_download_pack(remote, bytes, stats);
 }
 
-int git_remote_update_tips(git_remote *remote, int (*cb)(const char *refname, const git_oid *a, const git_oid *b))
+int git_remote_update_tips(git_remote *remote)
 {
 	int error = 0;
 	unsigned int i = 0;
@@ -377,12 +489,12 @@ int git_remote_update_tips(git_remote *remote, int (*cb)(const char *refname, co
 			continue;
 
 		if (git_reference_create_oid(&ref, remote->repo, refname.ptr, &head->oid, 1) < 0)
-			break;
+			goto on_error;
 
 		git_reference_free(ref);
 
-		if (cb != NULL) {
-			if (cb(refname.ptr, &old, &head->oid) < 0)
+		if (remote->callbacks.update_tips != NULL) {
+			if (remote->callbacks.update_tips(refname.ptr, &old, &head->oid, remote->callbacks.data) < 0)
 				goto on_error;
 		}
 	}
@@ -429,6 +541,7 @@ void git_remote_free(git_remote *remote)
 	git__free(remote->push.src);
 	git__free(remote->push.dst);
 	git__free(remote->url);
+	git__free(remote->pushurl);
 	git__free(remote->name);
 	git__free(remote);
 }
@@ -487,6 +600,11 @@ int git_remote_list(git_strarray *remotes_list, git_repository *repo)
 		}
 
 		git_vector_free(&list);
+
+		/* cb error is converted to GIT_EUSER by git_config_foreach */
+		if (error == GIT_EUSER)
+			error = -1;
+
 		return error;
 	}
 
@@ -524,4 +642,16 @@ void git_remote_check_cert(git_remote *remote, int check)
 	assert(remote);
 
 	remote->check_cert = check;
+}
+
+void git_remote_set_callbacks(git_remote *remote, git_remote_callbacks *callbacks)
+{
+	assert(remote && callbacks);
+
+	memcpy(&remote->callbacks, callbacks, sizeof(git_remote_callbacks));
+
+	if (remote->transport) {
+		remote->transport->progress_cb = remote->callbacks.progress;
+		remote->transport->cb_data = remote->callbacks.data;
+	}
 }

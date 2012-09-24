@@ -25,6 +25,7 @@ enum {
 	GIT_EEXISTS = -4,
 	GIT_EAMBIGUOUS = -5,
 	GIT_EBUFS = -6,
+	GIT_EUSER = -7,
 
 	GIT_PASSTHROUGH = -30,
 	GIT_REVWALKOVER = -31,
@@ -53,11 +54,11 @@ typedef enum {
 	GITERR_TREE,
 	GITERR_INDEXER,
 	GITERR_SSL,
-/* For UTF-8. Fix compilation bugs. Changed by Sprite Tong, 5/22/2012. */
-#ifndef __XUTF8_ENABLED__
+	GITERR_SUBMODULE,
 } git_error_t;
-#else
-}; typedef int git_error_t;
+/* For UTF-8. Fix compilation bugs. Changed by Sprite Tong, 5/22/2012. */
+#ifdef __XUTF8_ENABLED__
+#define git_error_t int
 #endif
 
 /**

@@ -12,6 +12,7 @@
 #include "vector.h"
 #include "posix.h"
 #include "common.h"
+#include "netops.h"
 #ifdef GIT_SSL
 # include <openssl/ssl.h>
 # include <openssl/err.h>
@@ -19,10 +20,16 @@
 
 
 #define GIT_CAP_OFS_DELTA "ofs-delta"
+#define GIT_CAP_MULTI_ACK "multi_ack"
+#define GIT_CAP_SIDE_BAND "side-band"
+#define GIT_CAP_SIDE_BAND_64K "side-band-64k"
 
 typedef struct git_transport_caps {
 	int common:1,
-		ofs_delta:1;
+		ofs_delta:1,
+		multi_ack: 1,
+		side_band:1,
+		side_band_64k:1;
 } git_transport_caps;
 
 #ifdef GIT_SSL
@@ -70,19 +77,26 @@ struct git_transport {
 	int direction : 1, /* 0 fetch, 1 push */
 		connected : 1,
 		check_cert: 1,
-		encrypt : 1;
+		use_ssl : 1,
+		own_logic: 1, /* transitional */
+		rpc: 1; /* git-speak for the HTTP transport */
 #ifdef GIT_SSL
 	struct gitno_ssl ssl;
 #endif
+	git_vector refs;
+	git_vector common;
+	gitno_buffer buffer;
 	GIT_SOCKET socket;
+	git_transport_caps caps;
+	void *cb_data;
 	/**
 	 * Connect and store the remote heads
 	 */
 	int (*connect)(struct git_transport *transport, int dir);
 	/**
-	 * Give a list of references, useful for ls-remote
+	 * Send our side of a negotiation
 	 */
-	int (*ls)(struct git_transport *transport, git_headlist_cb list_cb, void *opaque);
+	int (*negotiation_step)(struct git_transport *transport, void *data, size_t len);
 	/**
 	 * Push the changes over
 	 */
@@ -97,10 +111,6 @@ struct git_transport {
 	 */
 	int (*download_pack)(struct git_transport *transport, git_repository *repo, git_off_t *bytes, git_indexer_stats *stats);
 	/**
-	 * Fetch the changes
-	 */
-	int (*fetch)(struct git_transport *transport);
-	/**
 	 * Close the connection
 	 */
 	int (*close)(struct git_transport *transport);
@@ -108,6 +118,11 @@ struct git_transport {
 	 * Free the associated resources
 	 */
 	void (*free)(struct git_transport *transport);
+	/**
+	 * Callbacks for the progress and error output
+	 */
+	void (*progress_cb)(const char *str, int len, void *data);
+	void (*error_cb)(const char *str, int len, void *data);
 };
 
 
@@ -124,7 +139,6 @@ int git_transport_dummy(struct git_transport **transport);
 */
 int git_transport_valid_url(const char *url);
 
-typedef struct git_transport git_transport;
 typedef int (*git_transport_cb)(git_transport **transport);
 
 #endif

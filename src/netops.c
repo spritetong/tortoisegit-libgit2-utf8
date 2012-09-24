@@ -61,7 +61,50 @@ static int ssl_set_error(gitno_ssl *ssl, int error)
 }
 #endif
 
-void gitno_buffer_setup(git_transport *t, gitno_buffer *buf, char *data, unsigned int len)
+int gitno_recv(gitno_buffer *buf)
+{
+	return buf->recv(buf);
+}
+
+#ifdef GIT_SSL
+static int gitno__recv_ssl(gitno_buffer *buf)
+{
+	int ret;
+
+	do {
+		ret = SSL_read(buf->ssl->ssl, buf->data + buf->offset, buf->len - buf->offset);
+	} while (SSL_get_error(buf->ssl->ssl, ret) == SSL_ERROR_WANT_READ);
+
+	if (ret < 0) {
+		net_set_error("Error receiving socket data");
+		return -1;
+	}
+
+	buf->offset += ret;
+	return ret;
+}
+#endif
+
+int gitno__recv(gitno_buffer *buf)
+{
+	int ret;
+
+	ret = p_recv(buf->fd, buf->data + buf->offset, buf->len - buf->offset, 0);
+	if (ret < 0) {
+		net_set_error("Error receiving socket data");
+		return -1;
+	}
+
+	buf->offset += ret;
+	return ret;
+}
+
+void gitno_buffer_setup_callback(
+	git_transport *t,
+	gitno_buffer *buf,
+	char *data,
+	size_t len,
+	int (*recv)(gitno_buffer *buf), void *cb_data)
 {
 	memset(buf, 0x0, sizeof(gitno_buffer));
 	memset(data, 0x0, len);
@@ -69,53 +112,19 @@ void gitno_buffer_setup(git_transport *t, gitno_buffer *buf, char *data, unsigne
 	buf->len = len;
 	buf->offset = 0;
 	buf->fd = t->socket;
+	buf->recv = recv;
+	buf->cb_data = cb_data;
+}
+
+void gitno_buffer_setup(git_transport *t, gitno_buffer *buf, char *data, size_t len)
+{
 #ifdef GIT_SSL
-	if (t->encrypt)
+	if (t->use_ssl) {
+		gitno_buffer_setup_callback(t, buf, data, len, gitno__recv_ssl, NULL);
 		buf->ssl = &t->ssl;
+	} else
 #endif
-}
-
-#ifdef GIT_SSL
-static int ssl_recv(gitno_ssl *ssl, void *data, size_t len)
-{
-	int ret;
-
-	do {
-		ret = SSL_read(ssl->ssl, data, len);
-	} while (SSL_get_error(ssl->ssl, ret) == SSL_ERROR_WANT_READ);
-
-	if (ret < 0)
-		return ssl_set_error(ssl, ret);
-
-	return ret;
-}
-#endif
-
-int gitno_recv(gitno_buffer *buf)
-{
-	int ret;
-
-#ifdef GIT_SSL
-	if (buf->ssl != NULL) {
-		if ((ret = ssl_recv(buf->ssl, buf->data + buf->offset, buf->len - buf->offset)) < 0)
-			return -1;
-	} else {
-		ret = p_recv(buf->fd, buf->data + buf->offset, buf->len - buf->offset, 0);
-		if (ret < 0) {
-			net_set_error("Error receiving socket data");
-			return -1;
-		}
-	}
-#else
-	ret = p_recv(buf->fd, buf->data + buf->offset, buf->len - buf->offset, 0);
-	if (ret < 0) {
-		net_set_error("Error receiving socket data");
-		return -1;
-	}
-#endif
-
-	buf->offset += ret;
-	return ret;
+		gitno_buffer_setup_callback(t, buf, data, len, gitno__recv, NULL);
 }
 
 /* Consume up to ptr and move the rest of the buffer to the beginning */
@@ -147,7 +156,7 @@ int gitno_ssl_teardown(git_transport *t)
 	int ret;
 #endif
 
-	if (!t->encrypt)
+	if (!t->use_ssl)
 		return 0;
 
 #ifdef GIT_SSL
@@ -229,6 +238,10 @@ static int verify_server_cert(git_transport *t, const char *host)
 	void *addr;
 	int i = -1,j;
 
+	if (SSL_get_verify_result(t->ssl.ssl) != X509_V_OK) {
+		giterr_set(GITERR_SSL, "The SSL certificate is invalid");
+		return -1;
+	}
 
 	/* Try to parse the host as an IP address to see if it is */
 	if (inet_pton(AF_INET, host, &addr4)) {
@@ -277,7 +290,7 @@ static int verify_server_cert(git_transport *t, const char *host)
 	GENERAL_NAMES_free(alts);
 
 	if (matched == 0)
-		goto on_error;
+		goto cert_fail;
 
 	if (matched == 1)
 		return 0;
@@ -345,7 +358,7 @@ static int ssl_setup(git_transport *t, const char *host)
 		return ssl_set_error(&t->ssl, 0);
 
 	SSL_CTX_set_mode(t->ssl.ctx, SSL_MODE_AUTO_RETRY);
-	SSL_CTX_set_verify(t->ssl.ctx, SSL_VERIFY_PEER, NULL);
+	SSL_CTX_set_verify(t->ssl.ctx, SSL_VERIFY_NONE, NULL);
 	if (!SSL_CTX_set_default_verify_paths(t->ssl.ctx))
 		return ssl_set_error(&t->ssl, 0);
 
@@ -415,7 +428,7 @@ int gitno_connect(git_transport *t, const char *host, const char *port)
 	t->socket = s;
 	p_freeaddrinfo(info);
 
-	if (t->encrypt && ssl_setup(t, host) < 0)
+	if (t->use_ssl && ssl_setup(t, host) < 0)
 		return -1;
 
 	return 0;
@@ -445,7 +458,7 @@ int gitno_send(git_transport *t, const char *msg, size_t len, int flags)
 	size_t off = 0;
 
 #ifdef GIT_SSL
-	if (t->encrypt)
+	if (t->use_ssl)
 		return send_ssl(&t->ssl, msg, len);
 #endif
 

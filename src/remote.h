@@ -7,6 +7,8 @@
 #ifndef INCLUDE_remote_h__
 #define INCLUDE_remote_h__
 
+#include "git2/remote.h"
+
 #include "refspec.h"
 #include "transport.h"
 #include "repository.h"
@@ -14,13 +16,17 @@
 struct git_remote {
 	char *name;
 	char *url;
+	char *pushurl;
 	git_vector refs;
 	struct git_refspec fetch;
 	struct git_refspec push;
 	git_transport *transport;
 	git_repository *repo;
+	git_remote_callbacks callbacks;
 	unsigned int need_pack:1,
 		check_cert;
 };
+
+const char* git_remote__urlfordirection(struct git_remote *remote, int direction);
 
 #endif

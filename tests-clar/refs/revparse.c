@@ -64,6 +64,8 @@ void test_refs_revparse__invalid_reference_name(void)
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "this doesn't make sense"));
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "this doesn't make sense^1"));
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "this doesn't make sense~2"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, ""));
+
 }
 
 void test_refs_revparse__shas(void)
@@ -75,6 +77,9 @@ void test_refs_revparse__shas(void)
 void test_refs_revparse__head(void)
 {
 	test_object("HEAD", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
+	test_object("HEAD^0", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
+	test_object("HEAD~0", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
+	test_object("master", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
 }
 
 void test_refs_revparse__full_refs(void)
@@ -99,12 +104,18 @@ void test_refs_revparse__describe_output(void)
 
 void test_refs_revparse__nth_parent(void)
 {
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "be3563a^-1"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "^"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "be3563a^{tree}^"));
+
 	test_object("be3563a^1", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 	test_object("be3563a^", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 	test_object("be3563a^2", "c47800c7266a2be04c571c04d5a6614691ea99bd");
 	test_object("be3563a^1^1", "4a202b346bb0fb0db7eff3cffeb3c70babbd2045");
+	test_object("be3563a^^", "4a202b346bb0fb0db7eff3cffeb3c70babbd2045");
 	test_object("be3563a^2^1", "5b5b025afb0b4c913b4c338a42934a3863bf3644");
 	test_object("be3563a^0", "be3563ae3f795b2b4353bcce3a527ad0a4f7f644");
+	test_object("be3563a^{commit}^", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 
 	test_object("be3563a^42", NULL);
 }
@@ -113,34 +124,56 @@ void test_refs_revparse__not_tag(void)
 {
 	test_object("point_to_blob^{}", "1385f264afb75a56a5bec74243be9b367ba4ca08");
 	test_object("wrapped_tag^{}", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
+	test_object("master^{}", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
+	test_object("master^{tree}^{}", "944c0f6e4dfa41595e6eb3ceecdb14f50fe18162");
+	test_object("e90810b^{}", "e90810b8df3e80c413d903f631643c716887138d");
+	test_object("tags/e90810b^{}", "e90810b8df3e80c413d903f631643c716887138d");
+	test_object("e908^{}", "e90810b8df3e80c413d903f631643c716887138d");
 }
 
 void test_refs_revparse__to_type(void)
 {
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "wrapped_tag^{blob}"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "wrapped_tag^{trip}"));
+
 	test_object("wrapped_tag^{commit}", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
 	test_object("wrapped_tag^{tree}", "944c0f6e4dfa41595e6eb3ceecdb14f50fe18162");
 	test_object("point_to_blob^{blob}", "1385f264afb75a56a5bec74243be9b367ba4ca08");
-
-	cl_git_fail(git_revparse_single(&g_obj, g_repo, "wrapped_tag^{blob}"));
+	test_object("master^{commit}^{commit}", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
 }
 
 void test_refs_revparse__linear_history(void)
 {
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "~"));
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "foo~bar"));
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "master~bar"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "master~-1"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "master~0bar"));
 
 	test_object("master~0", "a65fedf39aefe402d3bb6e24df4d4f5fe4547750");
 	test_object("master~1", "be3563ae3f795b2b4353bcce3a527ad0a4f7f644");
 	test_object("master~2", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 	test_object("master~1~1", "9fd738e8f7967c078dceed8190330fc8648ee56a");
+	test_object("master~~", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 }
 
 void test_refs_revparse__chaining(void)
 {
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "master@{0}@{0}"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{u}@{-1}"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{-1}@{-1}"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{-3}@{0}"));
+
+	test_object("master@{0}~1^1", "9fd738e8f7967c078dceed8190330fc8648ee56a");
+	test_object("@{u}@{0}", "be3563ae3f795b2b4353bcce3a527ad0a4f7f644");
+	test_object("@{-1}@{0}", "a4a7dce85cf63874e984719f4fdd239f5145052f");
+	test_object("@{-4}@{1}", "be3563ae3f795b2b4353bcce3a527ad0a4f7f644");
 	test_object("master~1^1", "9fd738e8f7967c078dceed8190330fc8648ee56a");
 	test_object("master~1^2", "c47800c7266a2be04c571c04d5a6614691ea99bd");
 	test_object("master^1^2~1", "5b5b025afb0b4c913b4c338a42934a3863bf3644");
+	test_object("master^^2^", "5b5b025afb0b4c913b4c338a42934a3863bf3644");
 	test_object("master^1^1^1^1^1", "8496071c1b46c854b31185ea97743be6a8774479");
+	test_object("master^^1^2^1", NULL);
 }
 
 void test_refs_revparse__upstream(void)
@@ -158,6 +191,10 @@ void test_refs_revparse__upstream(void)
 void test_refs_revparse__ordinal(void)
 {
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "master@{-2}"));
+	
+	/* TODO: make the test below actually fail
+	 * cl_git_fail(git_revparse_single(&g_obj, g_repo, "master@{1a}"));
+	 */
 
 	test_object("nope@{0}", NULL);
 	test_object("master@{31415}", NULL);
@@ -177,6 +214,7 @@ void test_refs_revparse__previous_head(void)
 {
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{-xyz}"));
 	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{-0}"));
+	cl_git_fail(git_revparse_single(&g_obj, g_repo, "@{-1b}"));
 
 	test_object("@{-42}", NULL);
 
@@ -325,12 +363,26 @@ void test_refs_revparse__colon(void)
 	test_object("subtrees:nope", NULL);
 	test_object("test/master^1:branch_file.txt", NULL);
 
-	/* Trees */
+	/* From tags */
+	test_object("test:readme.txt", "0266163a49e280c4f5ed1e08facd36a2bd716bcf");
+	test_object("tags/test:readme.txt", "0266163a49e280c4f5ed1e08facd36a2bd716bcf");
+	test_object("e90810b:readme.txt", "0266163a49e280c4f5ed1e08facd36a2bd716bcf");
+	test_object("tags/e90810b:readme.txt", "0266163a49e280c4f5ed1e08facd36a2bd716bcf");
+
+	/* From commits */
+	test_object("a65f:branch_file.txt", "3697d64be941a53d4ae8f6a271e4e3fa56b022cc");
+
+	/* From trees */
+	test_object("a65f^{tree}:branch_file.txt", "3697d64be941a53d4ae8f6a271e4e3fa56b022cc");
+	test_object("944c:branch_file.txt", "3697d64be941a53d4ae8f6a271e4e3fa56b022cc");
+
+	/* Retrieving trees */
 	test_object("master:", "944c0f6e4dfa41595e6eb3ceecdb14f50fe18162");
 	test_object("subtrees:", "ae90f12eea699729ed24555e40b9fd669da12a12");
 	test_object("subtrees:ab", "f1425cef211cc08caa31e7b545ffb232acb098c3");
+	test_object("subtrees:ab/", "f1425cef211cc08caa31e7b545ffb232acb098c3");
 
-	/* Blobs */
+	/* Retrieving blobs */
 	test_object("subtrees:ab/4.txt", "d6c93164c249c8000205dd4ec5cbca1b516d487f");
 	test_object("subtrees:ab/de/fgh/1.txt", "1f67fc4386b2d171e0d21be1c447e12660561f9b");
 	test_object("master:README", "a8233120f6ad708f843d861ce2b7228ec4e3dec6");
@@ -339,4 +391,63 @@ void test_refs_revparse__colon(void)
 	test_object(":/one", "c47800c7266a2be04c571c04d5a6614691ea99bd");
 	test_object(":/packed commit t", "41bc8c69075bbdb46c5c6f0566cc8cc5b46e8bd9");
 	test_object("test/master^2:branch_file.txt", "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
+	test_object("test/master@{1}:branch_file.txt", "3697d64be941a53d4ae8f6a271e4e3fa56b022cc");
+}
+
+void test_refs_revparse__disambiguation(void)
+{
+	/*
+	 * $ git show e90810b
+	 * tag e90810b
+	 * Tagger: Vicent Marti <tanoku@gmail.com>
+	 * Date:   Thu Aug 12 03:59:17 2010 +0200
+	 *
+	 * This is a very simple tag.
+	 *
+	 * commit e90810b8df3e80c413d903f631643c716887138d
+	 * Author: Vicent Marti <tanoku@gmail.com>
+	 * Date:   Thu Aug 5 18:42:20 2010 +0200
+	 *
+	 *     Test commit 2
+	 *
+	 * diff --git a/readme.txt b/readme.txt
+	 * index 6336846..0266163 100644
+	 * --- a/readme.txt
+	 * +++ b/readme.txt
+	 * @@ -1 +1,2 @@
+	 *  Testing a readme.txt
+	 * +Now we add a single line here
+	 *
+	 * $ git show-ref e90810b
+	 * 7b4384978d2493e851f9cca7858815fac9b10980 refs/tags/e90810b
+	 *
+	 */
+	test_object("e90810b", "7b4384978d2493e851f9cca7858815fac9b10980");
+
+	/*
+	 * $ git show e90810
+	 * commit e90810b8df3e80c413d903f631643c716887138d
+	 * Author: Vicent Marti <tanoku@gmail.com>
+	 * Date:   Thu Aug 5 18:42:20 2010 +0200
+	 *
+	 *     Test commit 2
+	 *
+	 * diff --git a/readme.txt b/readme.txt
+	 * index 6336846..0266163 100644
+	 * --- a/readme.txt
+	 * +++ b/readme.txt
+	 * @@ -1 +1,2 @@
+	 *  Testing a readme.txt
+	 * +Now we add a single line here
+	 */
+	test_object("e90810", "e90810b8df3e80c413d903f631643c716887138d");
+}
+
+void test_refs_revparse__a_too_short_objectid_returns_EAMBIGUOUS(void)
+{
+	int result;
+	
+	result = git_revparse_single(&g_obj, g_repo, "e90");
+	
+	cl_assert_equal_i(GIT_EAMBIGUOUS, result);
 }

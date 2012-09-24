@@ -6,6 +6,7 @@
  */
 #include "common.h"
 #include "git2/diff.h"
+#include "git2/oid.h"
 #include "diff.h"
 #include "fileops.h"
 #include "config.h"
@@ -20,14 +21,21 @@ static char *diff_prefix_from_pathspec(const git_strarray *pathspec)
 		return NULL;
 
 	/* diff prefix will only be leading non-wildcards */
-	for (scan = prefix.ptr; *scan && !git__iswildcard(*scan); ++scan);
+	for (scan = prefix.ptr; *scan; ++scan) {
+		if (git__iswildcard(*scan) &&
+			(scan == prefix.ptr || (*(scan - 1) != '\\')))
+			break;
+	}
 	git_buf_truncate(&prefix, scan - prefix.ptr);
 
-	if (prefix.size > 0)
-		return git_buf_detach(&prefix);
+	if (prefix.size <= 0) {
+		git_buf_free(&prefix);
+		return NULL;
+	}
 
-	git_buf_free(&prefix);
-	return NULL;
+	git_buf_unescape(&prefix);
+
+	return git_buf_detach(&prefix);
 }
 
 static bool diff_pathspec_is_interesting(const git_strarray *pathspec)
@@ -54,7 +62,11 @@ static bool diff_path_matches_pathspec(git_diff_list *diff, const char *path)
 		return true;
 
 	git_vector_foreach(&diff->pathspec, i, match) {
-		int result = p_fnmatch(match->pattern, path, 0);
+		int result = strcmp(match->pattern, path) ? FNM_NOMATCH : 0;
+		
+		if (((diff->opts.flags & GIT_DIFF_DISABLE_PATHSPEC_MATCH) == 0) && 
+			result == FNM_NOMATCH)
+			result = p_fnmatch(match->pattern, path, 0);
 
 		/* if we didn't match, look for exact dirname prefix match */
 		if (result == FNM_NOMATCH &&
@@ -458,7 +470,8 @@ static int maybe_modified(
 
 	/* on platforms with no symlinks, preserve mode of existing symlinks */
 	if (S_ISLNK(omode) && S_ISREG(nmode) &&
-		!(diff->diffcaps & GIT_DIFFCAPS_HAS_SYMLINKS))
+		!(diff->diffcaps & GIT_DIFFCAPS_HAS_SYMLINKS) &&
+		new_iter->type == GIT_ITERATOR_WORKDIR)
 		nmode = omode;
 
 	/* on platforms with no execmode, just preserve old mode */
@@ -517,7 +530,7 @@ static int maybe_modified(
 				status = GIT_DELTA_UNMODIFIED;
 			else if (git_submodule_lookup(&sub, diff->repo, nitem->path) < 0)
 				return -1;
-			else if (sub->ignore == GIT_SUBMODULE_IGNORE_ALL)
+			else if (git_submodule_ignore(sub) == GIT_SUBMODULE_IGNORE_ALL)
 				status = GIT_DELTA_UNMODIFIED;
 			else {
 				/* TODO: support other GIT_SUBMODULE_IGNORE values */
@@ -814,9 +827,9 @@ int git_diff_merge(
 
 		/* prefix strings also come from old pool, so recreate those.*/
 		onto->opts.old_prefix =
-			git_pool_strdup(&onto->pool, onto->opts.old_prefix);
+			git_pool_strdup_safe(&onto->pool, onto->opts.old_prefix);
 		onto->opts.new_prefix =
-			git_pool_strdup(&onto->pool, onto->opts.new_prefix);
+			git_pool_strdup_safe(&onto->pool, onto->opts.new_prefix);
 	}
 
 	git_vector_foreach(&onto_new, i, delta)
@@ -826,4 +839,3 @@ int git_diff_merge(
 
 	return error;
 }
-

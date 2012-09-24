@@ -211,7 +211,7 @@ GIT_INLINE(bool) git__isdigit(int c)
 
 GIT_INLINE(bool) git__isspace(int c)
 {
-    return (c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == '\v');
+    return (c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == '\v' || c == 0x85 /* Unicode CR+LF */);
 }
 
 GIT_INLINE(bool) git__iswildcard(int c)
@@ -237,5 +237,14 @@ extern int git__parse_bool(int *out, const char *value);
  * - "2003-7-17 08:23"
  */
 int git__date_parse(git_time_t *out, const char *date);
+
+/*
+ * Unescapes a string in-place.
+ * 
+ * Edge cases behavior:
+ * - "jackie\" -> "jacky\"
+ * - "chan\\" -> "chan\"
+ */
+extern size_t git__unescape(char *str);
 
 #endif /* INCLUDE_util_h__ */

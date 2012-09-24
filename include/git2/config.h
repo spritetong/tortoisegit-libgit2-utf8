@@ -33,7 +33,7 @@ struct git_config_file {
 	int (*set)(struct git_config_file *, const char *key, const char *value);
 	int (*set_multivar)(git_config_file *cfg, const char *name, const char *regexp, const char *value);
 	int (*del)(struct git_config_file *, const char *key);
-	int (*foreach)(struct git_config_file *, int (*fn)(const char *, const char *, void *), void *data);
+	int (*foreach)(struct git_config_file *, const char *, int (*fn)(const char *, const char *, void *), void *data);
 	void (*free)(struct git_config_file *);
 };
 
@@ -80,15 +80,16 @@ GIT_EXTERN(int) git_config_find_global(char *global_config_path, size_t length);
 GIT_EXTERN(int) git_config_find_system(char *system_config_path, size_t length);
 
 /**
- * Open the global configuration file
+ * Open the global and system configuration files
  *
- * Utility wrapper that calls `git_config_find_global`
- * and opens the located file, if it exists.
+ * Utility wrapper that finds the global and system configuration files
+ * and opens them into a single prioritized config object that can be
+ * used when accessing default config data outside a repository.
  *
  * @param out Pointer to store the config instance
  * @return 0 or an error code
  */
-GIT_EXTERN(int) git_config_open_global(git_config **out);
+GIT_EXTERN(int) git_config_open_default(git_config **out);
 
 /**
  * Create a configuration file backend for ondisk files
@@ -302,18 +303,36 @@ GIT_EXTERN(int) git_config_delete(git_config *cfg, const char *name);
  * The callback receives the normalized name and value of each variable
  * in the config backend, and the data pointer passed to this function.
  * As soon as one of the callback functions returns something other than 0,
- * this function returns that value.
+ * this function stops iterating and returns `GIT_EUSER`.
  *
  * @param cfg where to get the variables from
  * @param callback the function to call on each variable
  * @param payload the data to pass to the callback
- * @return 0 or the return value of the callback which didn't return 0
+ * @return 0 on success, GIT_EUSER on non-zero callback, or error code
  */
 GIT_EXTERN(int) git_config_foreach(
 	git_config *cfg,
 	int (*callback)(const char *var_name, const char *value, void *payload),
 	void *payload);
 
+/**
+ * Perform an operation on each config variable matching a regular expression.
+ *
+ * This behaviors like `git_config_foreach` with an additional filter of a
+ * regular expression that filters which config keys are passed to the
+ * callback.
+ *
+ * @param cfg where to get the variables from
+ * @param regexp regular expression to match against config names
+ * @param callback the function to call on each variable
+ * @param payload the data to pass to the callback
+ * @return 0 or the return value of the callback which didn't return 0
+ */
+GIT_EXTERN(int) git_config_foreach_match(
+	git_config *cfg,
+	const char *regexp,
+	int (*callback)(const char *var_name, const char *value, void *payload),
+	void *payload);
 
 /**
  * Query the value of a config variable and return it mapped to
@@ -324,7 +343,7 @@ GIT_EXTERN(int) git_config_foreach(
  *
  * A mapping array looks as follows:
  *
- *	git_cvar_map autocrlf_mapping[3] = {
+ *	git_cvar_map autocrlf_mapping[] = {
  *		{GIT_CVAR_FALSE, NULL, GIT_AUTO_CRLF_FALSE},
  *		{GIT_CVAR_TRUE, NULL, GIT_AUTO_CRLF_TRUE},
  *		{GIT_CVAR_STRING, "input", GIT_AUTO_CRLF_INPUT},

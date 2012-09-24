@@ -50,7 +50,7 @@ GIT_INLINE(int) git_tree_lookup_prefix(
 	git_tree **tree,
 	git_repository *repo,
 	const git_oid *id,
-	unsigned int len)
+	size_t len)
 {
 	return git_object_lookup_prefix((git_object **)tree, repo, id, len, GIT_OBJ_TREE);
 }
@@ -126,15 +126,26 @@ GIT_EXTERN(const git_tree_entry *) git_tree_entry_byname(git_tree *tree, const c
  * @param idx the position in the entry list
  * @return the tree entry; NULL if not found
  */
-GIT_EXTERN(const git_tree_entry *) git_tree_entry_byindex(git_tree *tree, unsigned int idx);
+GIT_EXTERN(const git_tree_entry *) git_tree_entry_byindex(git_tree *tree, size_t idx);
+
+/**
+ * Lookup a tree entry by SHA value.
+ *
+ * Warning: this must examine every entry in the tree, so it is not fast.
+ *
+ * @param tree a previously loaded tree.
+ * @param oid the sha being looked for
+ * @return the tree entry; NULL if not found
+ */
+GIT_EXTERN(const git_tree_entry *) git_tree_entry_byoid(git_tree *tree, const git_oid *oid);
 
 /**
  * Get the UNIX file attributes of a tree entry
  *
  * @param entry a tree entry
- * @return attributes as an integer
+ * @return filemode as an integer
  */
-GIT_EXTERN(unsigned int) git_tree_entry_attributes(const git_tree_entry *entry);
+GIT_EXTERN(git_filemode_t) git_tree_entry_filemode(const git_tree_entry *entry);
 
 /**
  * Get the filename of a tree entry
@@ -252,11 +263,17 @@ GIT_EXTERN(const git_tree_entry *) git_treebuilder_get(git_treebuilder *bld, con
  * The optional pointer `entry_out` can be used to retrieve a
  * pointer to the newly created/updated entry.
  *
+ * No attempt is being made to ensure that the provided oid points
+ * to an existing git object in the object database, nor that the
+ * attributes make sense regarding the type of the pointed at object.
+ *
  * @param entry_out Pointer to store the entry (optional)
  * @param bld Tree builder
  * @param filename Filename of the entry
  * @param id SHA1 oid of the entry
- * @param attributes Folder attributes of the entry
+ * @param filemode Folder attributes of the entry. This parameter must
+ *			be valued with one of the following entries: 0040000, 0100644,
+ *			0100755, 0120000 or 0160000.
  * @return 0 or an error code
  */
 GIT_EXTERN(int) git_treebuilder_insert(
@@ -264,7 +281,7 @@ GIT_EXTERN(int) git_treebuilder_insert(
 	git_treebuilder *bld,
 	const char *filename,
 	const git_oid *id,
-	unsigned int attributes);
+	git_filemode_t filemode);
 
 /**
  * Remove an entry from the builder by its filename
@@ -340,8 +357,9 @@ enum git_treewalk_mode {
  * the current (relative) root for the entry and the entry
  * data itself.
  *
- * If the callback returns a negative value, the passed entry
- * will be skipped on the traversal.
+ * If the callback returns a positive value, the passed entry will be
+ * skipped on the traversal (in pre mode). A negative value stops the
+ * walk.
  *
  * @param tree The tree to walk
  * @param callback Function to call on each tree entry

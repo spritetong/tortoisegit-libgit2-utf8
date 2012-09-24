@@ -14,6 +14,7 @@
 #include "delta-apply.h"
 
 #include "git2/odb_backend.h"
+#include "git2/oid.h"
 
 #define GIT_ALTERNATES_FILE "info/alternates"
 
@@ -553,7 +554,7 @@ int git_odb_read(git_odb_object **out, git_odb *db, const git_oid *id)
 }
 
 int git_odb_read_prefix(
-	git_odb_object **out, git_odb *db, const git_oid *short_id, unsigned int len)
+	git_odb_object **out, git_odb *db, const git_oid *short_id, size_t len)
 {
 	unsigned int i;
 	int error = GIT_ENOTFOUND;
@@ -602,6 +603,21 @@ int git_odb_read_prefix(
 		return git_odb__error_notfound("no match for prefix", short_id);
 
 	*out = git_cache_try_store(&db->cache, new_odb_object(&found_full_oid, &raw));
+	return 0;
+}
+
+int git_odb_foreach(git_odb *db, int (*cb)(git_oid *oid, void *data), void *data)
+{
+	unsigned int i;
+	backend_internal *internal;
+
+	git_vector_foreach(&db->backends, i, internal) {
+		git_odb_backend *b = internal->backend;
+		int error = b->foreach(b, cb, data);
+		if (error < 0)
+			return error;
+	}
+
 	return 0;
 }
 

@@ -141,6 +141,51 @@ int git_buf_puts(git_buf *buf, const char *string)
 	return git_buf_put(buf, string, strlen(string));
 }
 
+int git_buf_puts_escaped(
+	git_buf *buf, const char *string, const char *esc_chars, const char *esc_with)
+{
+	const char *scan;
+	size_t total = 0, esc_len = strlen(esc_with), count;
+
+	if (!string)
+		return 0;
+
+	for (scan = string; *scan; ) {
+		/* count run of non-escaped characters */
+		count = strcspn(scan, esc_chars);
+		total += count;
+		scan += count;
+		/* count run of escaped characters */
+		count = strspn(scan, esc_chars);
+		total += count * (esc_len + 1);
+		scan += count;
+	}
+
+	ENSURE_SIZE(buf, buf->size + total + 1);
+
+	for (scan = string; *scan; ) {
+		count = strcspn(scan, esc_chars);
+
+		memmove(buf->ptr + buf->size, scan, count);
+		scan += count;
+		buf->size += count;
+
+		for (count = strspn(scan, esc_chars); count > 0; --count) {
+			/* copy escape sequence */
+			memmove(buf->ptr + buf->size, esc_with, esc_len);
+			buf->size += esc_len;
+			/* copy character to be escaped */
+			buf->ptr[buf->size] = *scan;
+			buf->size++;
+			scan++;
+		}
+	}
+
+	buf->ptr[buf->size] = '\0';
+
+	return 0;
+}
+
 int git_buf_vprintf(git_buf *buf, const char *format, va_list ap)
 {
 	int len;
@@ -460,3 +505,7 @@ bool git_buf_is_binary(const git_buf *buf)
 	return ((printable >> 7) < nonprintable);
 }
 
+void git_buf_unescape(git_buf *buf)
+{
+	buf->size = git__unescape(buf->ptr);
+}

@@ -22,18 +22,16 @@ GIT_INLINE(int) p_link(const char *old, const char *newname)
 
 GIT_INLINE(int) p_mkdir(const char *path, mode_t mode)
 {
-	wchar_t* buf = gitwin_to_utf16(path);
-	int ret = _wmkdir(buf);
-
+	wchar_t buf[GIT_WIN_PATH];
 	GIT_UNUSED(mode);
-
-	git__free(buf);
-	return ret;
+	git__utf8_to_16(buf, GIT_WIN_PATH, path);
+	return _wmkdir(buf);
 }
 
 extern int p_unlink(const char *path);
 extern int p_lstat(const char *file_name, struct stat *buf);
 extern int p_readlink(const char *link, char *target, size_t target_len);
+extern int p_symlink(const char *old, const char *_new);
 extern int p_hide_directory__w32(const char *path);
 extern char *p_realpath(const char *orig_path, char *buffer);
 extern int p_vsnprintf(char *buffer, size_t count, const char *format, va_list argptr);

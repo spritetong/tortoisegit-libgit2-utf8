@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 struct dl_data {
 	git_remote *remote;
@@ -12,6 +13,13 @@ struct dl_data {
 	int ret;
 	int finished;
 };
+
+static void progress_cb(const char *str, int len, void *data)
+{
+	data = data;
+	printf("remote: %.*s", len, str);
+	fflush(stdout); /* We don't have the \n to force the flush */
+}
 
 static void *download(void *ptr)
 {
@@ -39,10 +47,10 @@ exit:
 	pthread_exit(&data->ret);
 }
 
-int update_cb(const char *refname, const git_oid *a, const git_oid *b)
+static int update_cb(const char *refname, const git_oid *a, const git_oid *b, void *data)
 {
-	const char *action;
 	char a_str[GIT_OID_HEXSZ+1], b_str[GIT_OID_HEXSZ+1];
+	data = data;
 
 	git_oid_fmt(b_str, b);
 	b_str[GIT_OID_HEXSZ] = '\0';
@@ -65,13 +73,21 @@ int fetch(git_repository *repo, int argc, char **argv)
 	git_indexer_stats stats;
 	pthread_t worker;
 	struct dl_data data;
+	git_remote_callbacks callbacks;
 
+	argc = argc;
 	// Figure out whether it's a named remote or a URL
 	printf("Fetching %s\n", argv[1]);
 	if (git_remote_load(&remote, repo, argv[1]) < 0) {
 		if (git_remote_new(&remote, repo, NULL, argv[1], NULL) < 0)
 			return -1;
 	}
+
+	// Set up the callbacks (only update_tips for now)
+	memset(&callbacks, 0, sizeof(callbacks));
+	callbacks.update_tips = &update_cb;
+	callbacks.progress = &progress_cb;
+	git_remote_set_callbacks(remote, &callbacks);
 
 	// Set up the information for the background worker thread
 	data.remote = remote;
@@ -89,10 +105,17 @@ int fetch(git_repository *repo, int argc, char **argv)
 	// the download rate.
 	do {
 		usleep(10000);
-		printf("\rReceived %d/%d objects in %d bytes", stats.processed, stats.total, bytes);
+
+		if (stats.total > 0)
+			printf("Received %d/%d objects (%d) in %d bytes\r",
+			       stats.received, stats.total, stats.processed, bytes);
 	} while (!data.finished);
 
-	printf("\rReceived %d/%d objects in %d bytes\n", stats.processed, stats.total, bytes);
+	if (data.ret < 0)
+		goto on_error;
+
+	pthread_join(worker, NULL);
+	printf("\rReceived %d/%d objects in %zu bytes\n", stats.processed, stats.total, bytes);
 
 	// Disconnect the underlying connection to prevent from idling.
 	git_remote_disconnect(remote);
@@ -101,7 +124,7 @@ int fetch(git_repository *repo, int argc, char **argv)
 	// right commits. This may be needed even if there was no packfile
 	// to download, which can happen e.g. when the branches have been
 	// changed but all the neede objects are available locally.
-	if (git_remote_update_tips(remote, update_cb) < 0)
+	if (git_remote_update_tips(remote) < 0)
 		return -1;
 
 	git_remote_free(remote);

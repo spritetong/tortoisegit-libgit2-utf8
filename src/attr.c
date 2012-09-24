@@ -1,9 +1,29 @@
 #include "repository.h"
 #include "fileops.h"
 #include "config.h"
+#include "git2/oid.h"
 #include <ctype.h>
 
 GIT__USE_STRMAP;
+
+const char *git_attr__true  = "[internal]__TRUE__";
+const char *git_attr__false = "[internal]__FALSE__";
+const char *git_attr__unset = "[internal]__UNSET__";
+
+git_attr_t git_attr_value(const char *attr)
+{
+	if (attr == NULL || attr == git_attr__unset)
+		return GIT_ATTR_UNSPECIFIED_T;
+
+	if (attr == git_attr__true)
+		return GIT_ATTR_TRUE_T;
+
+	if (attr == git_attr__false)
+		return GIT_ATTR_FALSE_T;
+
+	return GIT_ATTR_VALUE_T;
+}
+
 
 static int collect_attr_files(
 	git_repository *repo,
@@ -22,7 +42,7 @@ int git_attr_get(
 	int error;
 	git_attr_path path;
 	git_vector files = GIT_VECTOR_INIT;
-	unsigned int i, j;
+	size_t i, j;
 	git_attr_file *file;
 	git_attr_name attr;
 	git_attr_rule *rule;
@@ -74,7 +94,7 @@ int git_attr_get_many(
 	int error;
 	git_attr_path path;
 	git_vector files = GIT_VECTOR_INIT;
-	unsigned int i, j, k;
+	size_t i, j, k;
 	git_attr_file *file;
 	git_attr_rule *rule;
 	attr_get_many_info *info = NULL;
@@ -138,7 +158,7 @@ int git_attr_foreach(
 	int error;
 	git_attr_path path;
 	git_vector files = GIT_VECTOR_INIT;
-	unsigned int i, j, k;
+	size_t i, j, k;
 	git_attr_file *file;
 	git_attr_rule *rule;
 	git_attr_assignment *assign;
@@ -163,11 +183,14 @@ int git_attr_foreach(
 					continue;
 
 				git_strmap_insert(seen, assign->name, assign, error);
-				if (error >= 0)
-					error = callback(assign->name, assign->value, payload);
-
-				if (error != 0)
+				if (error < 0)
 					goto cleanup;
+
+				error = callback(assign->name, assign->value, payload);
+				if (error) {
+					error = GIT_EUSER;
+					goto cleanup;
+				}
 			}
 		}
 	}
@@ -567,6 +590,18 @@ static int collect_attr_files(
 	return error;
 }
 
+static char *try_global_default(const char *relpath)
+{
+	git_buf dflt = GIT_BUF_INIT;
+	char *rval = NULL;
+
+	if (!git_futils_find_global_file(&dflt, relpath))
+		rval = git_buf_detach(&dflt);
+
+	git_buf_free(&dflt);
+
+	return rval;
+}
 
 int git_attr_cache__init(git_repository *repo)
 {
@@ -584,10 +619,14 @@ int git_attr_cache__init(git_repository *repo)
 	ret = git_config_get_string(&cache->cfg_attr_file, cfg, GIT_ATTR_CONFIG);
 	if (ret < 0 && ret != GIT_ENOTFOUND)
 		return ret;
+	if (ret == GIT_ENOTFOUND)
+		cache->cfg_attr_file = try_global_default(GIT_ATTR_CONFIG_DEFAULT);
 
 	ret = git_config_get_string(&cache->cfg_excl_file, cfg, GIT_IGNORE_CONFIG);
 	if (ret < 0 && ret != GIT_ENOTFOUND)
 		return ret;
+	if (ret == GIT_ENOTFOUND)
+		cache->cfg_excl_file = try_global_default(GIT_IGNORE_CONFIG_DEFAULT);
 
 	giterr_clear();
 

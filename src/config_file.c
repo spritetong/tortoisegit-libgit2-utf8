@@ -188,25 +188,50 @@ static void backend_free(git_config_file *_backend)
 	git__free(backend);
 }
 
-static int file_foreach(git_config_file *backend, int (*fn)(const char *, const char *, void *), void *data)
+static int file_foreach(
+	git_config_file *backend,
+	const char *regexp,
+	int (*fn)(const char *, const char *, void *),
+	void *data)
 {
 	diskfile_backend *b = (diskfile_backend *)backend;
-	cvar_t *var;
+	cvar_t *var, *next_var;
 	const char *key;
+	regex_t regex;
+	int result = 0;
 
 	if (!b->values)
 		return 0;
 
-	git_strmap_foreach(b->values, key, var,
-		do {
-			if (fn(key, var->value, data) < 0)
-				break;
+	if (regexp != NULL) {
+		if ((result = regcomp(&regex, regexp, REG_EXTENDED)) < 0) {
+			giterr_set_regex(&regex, result);
+			regfree(&regex);
+			return -1;
+		}
+	}
 
-			var = CVAR_LIST_NEXT(var);
-		} while (var != NULL);
+	git_strmap_foreach(b->values, key, var,
+		for (; var != NULL; var = next_var) {
+			next_var = CVAR_LIST_NEXT(var);
+
+			/* skip non-matching keys if regexp was provided */
+			if (regexp && regexec(&regex, key, 0, NULL, 0) != 0)
+				continue;
+
+			/* abort iterator on non-zero return value */
+			if (fn(key, var->value, data)) {
+				result = GIT_EUSER;
+				goto cleanup;
+			}
+		}
 	);
 
-	return 0;
+cleanup:
+	if (regexp != NULL)
+		regfree(&regex);
+
+	return result;
 }
 
 static int config_set(git_config_file *cfg, const char *name, const char *value)
@@ -230,10 +255,16 @@ static int config_set(git_config_file *cfg, const char *name, const char *value)
 		char *tmp = NULL;
 
 		git__free(key);
+
 		if (existing->next != NULL) {
 			giterr_set(GITERR_CONFIG, "Multivar incompatible with simple set");
 			return -1;
 		}
+
+		/* don't update if old and new values already match */
+		if ((!existing->value && !value) ||
+			(existing->value && value && !strcmp(existing->value, value)))
+			return 0;
 
 		if (value) {
 			tmp = git__strdup(value);
@@ -337,6 +368,7 @@ static int config_get_multivar(
 		result = regcomp(&regex, regex_str, REG_EXTENDED);
 		if (result < 0) {
 			giterr_set_regex(&regex, result);
+			regfree(&regex);
 			return -1;
 		}
 
@@ -396,6 +428,7 @@ static int config_set_multivar(
 	if (result < 0) {
 		git__free(key);
 		giterr_set_regex(&preg, result);
+		regfree(&preg);
 		return -1;
 	}
 
@@ -960,9 +993,12 @@ static int write_section(git_filebuf *file, const char *key)
 	if (dot == NULL) {
 		git_buf_puts(&buf, key);
 	} else {
+		char *escaped;
 		git_buf_put(&buf, key, dot - key);
-		/* TODO: escape  */
-		git_buf_printf(&buf, " \"%s\"", dot + 1);
+		escaped = escape_value(dot + 1);
+		GITERR_CHECK_ALLOC(escaped);
+		git_buf_printf(&buf, " \"%s\"", escaped);
+		git__free(escaped);
 	}
 	git_buf_puts(&buf, "]\n");
 
@@ -1315,10 +1351,8 @@ static int parse_variable(diskfile_backend *cfg, char **var_name, char **var_val
 	else
 		value_start = var_end + 1;
 
-	if (git__isspace(var_end[-1])) {
-		do var_end--;
-		while (git__isspace(var_end[0]));
-	}
+	do var_end--;
+	while (git__isspace(*var_end));
 
 	*var_name = git__strndup(line, var_end - line + 1);
 	GITERR_CHECK_ALLOC(*var_name);

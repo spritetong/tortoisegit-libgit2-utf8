@@ -268,14 +268,15 @@ GIT_EXTERN(int) git_reference_list(git_strarray *array, git_repository *repo, un
  *
  * The `callback` function will be called for each of the references
  * in the repository, and will receive the name of the reference and
- * the `payload` value passed to this method.
+ * the `payload` value passed to this method.  Returning a non-zero
+ * value from the callback will terminate the iteration.
  *
  * @param repo Repository where to find the refs
  * @param list_flags Filtering flags for the reference
  *		listing.
  * @param callback Function which will be called for every listed ref
  * @param payload Additional data to pass to the callback
- * @return 0 or an error code
+ * @return 0 on success, GIT_EUSER on non-zero callback, or error code
  */
 GIT_EXTERN(int) git_reference_foreach(git_repository *repo, unsigned int list_flags, int (*callback)(const char *, void *), void *payload);
 
@@ -334,6 +335,8 @@ GIT_EXTERN(int) git_reference_cmp(git_reference *ref1, git_reference *ref2);
  *
  * @param repo Repository where to find the references.
  *
+ * @param glob Glob pattern references should match.
+ *
  * @param list_flags Filtering flags for the reference
  * listing.
  *
@@ -362,6 +365,74 @@ GIT_EXTERN(int) git_reference_foreach_glob(
  * otherwise an error code.
  */
 GIT_EXTERN(int) git_reference_has_log(git_reference *ref);
+
+/**
+ * Check if a reference is a local branch.
+ *
+ * @param ref A git reference
+ *
+ * @return 1 when the reference lives in the refs/heads
+ * namespace; 0 otherwise.
+ */
+GIT_EXTERN(int) git_reference_is_branch(git_reference *ref);
+
+/**
+ * Check if a reference is a remote tracking branch
+ *
+ * @param ref A git reference
+ *
+ * @return 1 when the reference lives in the refs/remotes
+ * namespace; 0 otherwise.
+ */
+GIT_EXTERN(int) git_reference_is_remote(git_reference *ref);
+
+enum {
+	GIT_REF_FORMAT_NORMAL = 0,
+
+	/**
+	 * Control whether one-level refnames are accepted
+	 * (i.e., refnames that do not contain multiple /-separated
+	 * components)
+	 */
+	GIT_REF_FORMAT_ALLOW_ONELEVEL = (1 << 0),
+
+	/**
+	 * Interpret the provided name as a reference pattern for a
+	 * refspec (as used with remote repositories). If this option
+	 * is enabled, the name is allowed to contain a single * (<star>)
+	 * in place of a one full pathname component
+	 * (e.g., foo/<star>/bar but not foo/bar<star>).
+	 */
+	GIT_REF_FORMAT_REFSPEC_PATTERN = (1 << 1),
+};
+
+/**
+ * Normalize the reference name by removing any leading
+ * slash (/) characters and collapsing runs of adjacent slashes
+ * between name components into a single slash.
+ *
+ * Once normalized, if the reference name is valid, it will be
+ * returned in the user allocated buffer.
+ *
+ * TODO: Implement handling of GIT_REF_FORMAT_REFSPEC_PATTERN
+ *
+ * @param buffer_out The user allocated buffer where the
+ * normalized name will be stored.
+ *
+ * @param buffer_size buffer_out size
+ *
+ * @param name name to be checked.
+ *
+ * @param flags Flags to determine the options to be applied while
+ * checking the validatity of the name.
+ *
+ * @return 0 or an error code.
+ */
+GIT_EXTERN(int) git_reference_normalize_name(
+	char *buffer_out,
+	size_t buffer_size,
+	const char *name,
+	unsigned int flags);
 
 /** @} */
 GIT_END_DECL

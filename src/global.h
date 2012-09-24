@@ -10,17 +10,13 @@
 #include "mwindow.h"
 
 typedef struct {
-	struct {
-		char last[1024];
-	} error;
-
 	git_error *last_error;
 	git_error error_t;
-
-	git_mwindow_ctl mem_ctl;
 } git_global_st;
 
 git_global_st *git__global_state(void);
+
+extern git_mutex git__mwindow_mutex;
 
 #define GIT_GLOBAL (git__global_state())
 

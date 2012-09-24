@@ -14,6 +14,7 @@
 #include "tree-cache.h"
 #include "hash.h"
 #include "git2/odb.h"
+#include "git2/oid.h"
 #include "git2/blob.h"
 #include "git2/config.h"
 
@@ -329,16 +330,16 @@ int git_index_write(git_index *index)
 unsigned int git_index_entrycount(git_index *index)
 {
 	assert(index);
-	return index->entries.length;
+	return (unsigned int)index->entries.length;
 }
 
 unsigned int git_index_entrycount_unmerged(git_index *index)
 {
 	assert(index);
-	return index->unmerged.length;
+	return (unsigned int)index->unmerged.length;
 }
 
-git_index_entry *git_index_get(git_index *index, unsigned int n)
+git_index_entry *git_index_get(git_index *index, size_t n)
 {
 	git_vector_sort(&index->entries);
 	return git_vector_get(&index->entries, n);
@@ -584,7 +585,7 @@ const git_index_entry_unmerged *git_index_get_unmerged_bypath(
 }
 
 const git_index_entry_unmerged *git_index_get_unmerged_byindex(
-	git_index *index, unsigned int n)
+	git_index *index, size_t n)
 {
 	assert(index);
 	return git_vector_get(&index->unmerged, n);
@@ -963,7 +964,7 @@ static int write_index(git_index *index, git_filebuf *file)
 
 	header.signature = htonl(INDEX_HEADER_SIG);
 	header.version = htonl(is_extended ? INDEX_VERSION_NUMBER_EXT : INDEX_VERSION_NUMBER);
-	header.entry_count = htonl(index->entries.length);
+	header.entry_count = htonl((uint32_t)index->entries.length);
 
 	if (git_filebuf_write(file, &header, sizeof(struct index_header)) < 0)
 		return -1;
@@ -985,11 +986,18 @@ int git_index_entry_stage(const git_index_entry *entry)
 	return (entry->flags & GIT_IDXENTRY_STAGEMASK) >> GIT_IDXENTRY_STAGESHIFT;
 }
 
+typedef struct read_tree_data {
+	git_index *index;
+	git_indexer_stats *stats;
+} read_tree_data;
+
 static int read_tree_cb(const char *root, const git_tree_entry *tentry, void *data)
 {
-	git_index *index = data;
+	read_tree_data *rtd = data;
 	git_index_entry *entry = NULL;
 	git_buf path = GIT_BUF_INIT;
+
+	rtd->stats->total++;
 
 	if (git_tree_entry__is_tree(tentry))
 		return 0;
@@ -1005,7 +1013,7 @@ static int read_tree_cb(const char *root, const git_tree_entry *tentry, void *da
 	entry->path = git_buf_detach(&path);
 	git_buf_free(&path);
 
-	if (index_insert(index, entry, 0) < 0) {
+	if (index_insert(rtd->index, entry, 0) < 0) {
 		index_entry_free(entry);
 		return -1;
 	}
@@ -1013,9 +1021,16 @@ static int read_tree_cb(const char *root, const git_tree_entry *tentry, void *da
 	return 0;
 }
 
-int git_index_read_tree(git_index *index, git_tree *tree)
+int git_index_read_tree(git_index *index, git_tree *tree, git_indexer_stats *stats)
 {
+	git_indexer_stats dummy_stats;
+	read_tree_data rtd = {index, NULL};
+
+	if (!stats) stats = &dummy_stats;
+	stats->total = 0;
+	rtd.stats = stats;
+
 	git_index_clear(index);
 
-	return git_tree_walk(tree, read_tree_cb, GIT_TREEWALK_POST, index);
+	return git_tree_walk(tree, read_tree_cb, GIT_TREEWALK_POST, &rtd);
 }

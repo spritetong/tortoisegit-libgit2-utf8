@@ -24,9 +24,6 @@ int git_oid_fromstrn(git_oid *out, const char *str, size_t length)
 	size_t p;
 	int v;
 
-	if (length < 4)
-		return oid_error_invalid("input too short");
-
 	if (length > GIT_OID_HEXSZ)
 		length = GIT_OID_HEXSZ;
 
@@ -161,12 +158,7 @@ void git_oid_cpy(git_oid *out, const git_oid *src)
 	memcpy(out->id, src->id, sizeof(out->id));
 }
 
-int git_oid_cmp(const git_oid *a, const git_oid *b)
-{
-	return memcmp(a->id, b->id, sizeof(a->id));
-}
-
-int git_oid_ncmp(const git_oid *oid_a, const git_oid *oid_b, unsigned int len)
+int git_oid_ncmp(const git_oid *oid_a, const git_oid *oid_b, size_t len)
 {
 	const unsigned char *a = oid_a->id;
 	const unsigned char *b = oid_b->id;

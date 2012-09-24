@@ -16,12 +16,12 @@ static git_repository *g_repo;
 
 void test_refs_read__initialize(void)
 {
-   g_repo = cl_git_sandbox_init("testrepo");
+	cl_git_pass(git_repository_open(&g_repo, cl_fixture("testrepo.git")));
 }
 
 void test_refs_read__cleanup(void)
 {
-   cl_git_sandbox_cleanup();
+	git_repository_free(g_repo);
 }
 
 void test_refs_read__loose_tag(void)
@@ -193,6 +193,30 @@ void test_refs_read__loose_first(void)
 	git_reference_free(reference);
 }
 
+void test_refs_read__chomped(void)
+{
+	git_reference *test, *chomped;
+
+	cl_git_pass(git_reference_lookup(&test, g_repo, "refs/heads/test"));
+	cl_git_pass(git_reference_lookup(&chomped, g_repo, "refs/heads/chomped"));
+	cl_git_pass(git_oid_cmp(git_reference_oid(test), git_reference_oid(chomped)));
+
+	git_reference_free(test);
+	git_reference_free(chomped);
+}
+
+void test_refs_read__trailing(void)
+{
+	git_reference *test, *trailing;
+
+	cl_git_pass(git_reference_lookup(&test, g_repo, "refs/heads/test"));
+	cl_git_pass(git_reference_lookup(&trailing, g_repo, "refs/heads/trailing"));
+	cl_git_pass(git_oid_cmp(git_reference_oid(test), git_reference_oid(trailing)));
+
+	git_reference_free(test);
+	git_reference_free(trailing);
+}
+
 void test_refs_read__unfound_return_ENOTFOUND(void)
 {
 	git_reference *reference;
@@ -201,4 +225,20 @@ void test_refs_read__unfound_return_ENOTFOUND(void)
 	cl_assert_equal_i(GIT_ENOTFOUND, git_reference_lookup(&reference, g_repo, "refs/test/master"));
 	cl_assert_equal_i(GIT_ENOTFOUND, git_reference_lookup(&reference, g_repo, "refs/tags/test/master"));
 	cl_assert_equal_i(GIT_ENOTFOUND, git_reference_lookup(&reference, g_repo, "refs/tags/test/farther/master"));
+}
+
+static void assert_is_branch(const char *name, bool expected_branchness)
+{
+	git_reference *reference;
+	cl_git_pass(git_reference_lookup(&reference, g_repo, name));
+	cl_assert_equal_i(expected_branchness, git_reference_is_branch(reference));
+	git_reference_free(reference);
+}
+
+void test_refs_read__can_determine_if_a_reference_is_a_local_branch(void)
+{
+	assert_is_branch("refs/heads/master", true);
+	assert_is_branch("refs/heads/packed", true);
+	assert_is_branch("refs/remotes/test/master", false);
+	assert_is_branch("refs/tags/e90810b", false);
 }

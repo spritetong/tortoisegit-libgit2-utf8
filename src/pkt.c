@@ -17,6 +17,7 @@
 #include "netops.h"
 #include "posix.h"
 #include "buffer.h"
+#include "protocol.h"
 
 #include <ctype.h>
 
@@ -42,15 +43,29 @@ static int flush_pkt(git_pkt **out)
 /* the rest of the line will be useful for multi_ack */
 static int ack_pkt(git_pkt **out, const char *line, size_t len)
 {
-	git_pkt *pkt;
+	git_pkt_ack *pkt;
 	GIT_UNUSED(line);
 	GIT_UNUSED(len);
 
-	pkt = git__malloc(sizeof(git_pkt));
+	pkt = git__calloc(1, sizeof(git_pkt_ack));
 	GITERR_CHECK_ALLOC(pkt);
 
 	pkt->type = GIT_PKT_ACK;
-	*out = pkt;
+	line += 3;
+	len -= 3;
+
+	if (len >= GIT_OID_HEXSZ) {
+		git_oid_fromstr(&pkt->oid, line + 1);
+		line += GIT_OID_HEXSZ + 1;
+		len -= GIT_OID_HEXSZ + 1;
+	}
+
+	if (len >= 7) {
+		if (!git__prefixcmp(line + 1, "continue"))
+			pkt->status = GIT_ACK_CONTINUE;
+	}
+
+	*out = (git_pkt *) pkt;
 
 	return 0;
 }
@@ -110,6 +125,42 @@ static int err_pkt(git_pkt **out, const char *line, size_t len)
 	pkt->type = GIT_PKT_ERR;
 	memcpy(pkt->error, line, len);
 	pkt->error[len] = '\0';
+
+	*out = (git_pkt *) pkt;
+
+	return 0;
+}
+
+static int data_pkt(git_pkt **out, const char *line, size_t len)
+{
+	git_pkt_data *pkt;
+
+	line++;
+	len--;
+	pkt = git__malloc(sizeof(git_pkt_data) + len);
+	GITERR_CHECK_ALLOC(pkt);
+
+	pkt->type = GIT_PKT_DATA;
+	pkt->len = (int) len;
+	memcpy(pkt->data, line, len);
+
+	*out = (git_pkt *) pkt;
+
+	return 0;
+}
+
+static int progress_pkt(git_pkt **out, const char *line, size_t len)
+{
+	git_pkt_progress *pkt;
+
+	line++;
+	len--;
+	pkt = git__malloc(sizeof(git_pkt_progress) + len);
+	GITERR_CHECK_ALLOC(pkt);
+
+	pkt->type = GIT_PKT_PROGRESS;
+	pkt->len = (int) len;
+	memcpy(pkt->data, line, len);
 
 	*out = (git_pkt *) pkt;
 
@@ -249,8 +300,11 @@ int git_pkt_parse_line(
 
 	len -= PKT_LEN_SIZE; /* the encoded length includes its own size */
 
-	/* Assming the minimal size is actually 4 */
-	if (!git__prefixcmp(line, "ACK"))
+	if (*line == GIT_SIDE_BAND_DATA)
+		ret = data_pkt(head, line, len);
+	else if (*line == GIT_SIDE_BAND_PROGRESS)
+		ret = progress_pkt(head, line, len);
+	else if (!git__prefixcmp(line, "ACK"))
 		ret = ack_pkt(head, line, len);
 	else if (!git__prefixcmp(line, "NAK"))
 		ret = nak_pkt(head);
@@ -283,20 +337,35 @@ int git_pkt_buffer_flush(git_buf *buf)
 
 static int buffer_want_with_caps(git_remote_head *head, git_transport_caps *caps, git_buf *buf)
 {
-	char capstr[20];
+	git_buf str = GIT_BUF_INIT;
 	char oid[GIT_OID_HEXSZ +1] = {0};
 	unsigned int len;
 
+	/* Prefer side-band-64k if the server supports both */
+	if (caps->side_band) {
+		if (caps->side_band_64k)
+			git_buf_printf(&str, "%s ", GIT_CAP_SIDE_BAND_64K);
+		else
+			git_buf_printf(&str, "%s ", GIT_CAP_SIDE_BAND);
+	}
 	if (caps->ofs_delta)
-		strncpy(capstr, GIT_CAP_OFS_DELTA, sizeof(capstr));
+		git_buf_puts(&str, GIT_CAP_OFS_DELTA " ");
+
+	if (caps->multi_ack)
+		git_buf_puts(&str, GIT_CAP_MULTI_ACK " ");
+
+	if (git_buf_oom(&str))
+		return -1;
 
 	len = (unsigned int)
 		(strlen("XXXXwant ") + GIT_OID_HEXSZ + 1 /* NUL */ +
-		 strlen(capstr) + 1 /* LF */);
+		 git_buf_len(&str) + 1 /* LF */);
 	git_buf_grow(buf, git_buf_len(buf) + len);
-
 	git_oid_fmt(oid, &head->oid);
-	return git_buf_printf(buf, "%04xwant %s%c%s\n", len, oid, 0, capstr);
+	git_buf_printf(buf, "%04xwant %s %s\n", len, oid, git_buf_cstr(&str));
+	git_buf_free(&str);
+
+	return git_buf_oom(buf);
 }
 
 /*

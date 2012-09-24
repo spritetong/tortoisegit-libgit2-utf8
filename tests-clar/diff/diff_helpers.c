@@ -5,7 +5,7 @@ git_tree *resolve_commit_oid_to_tree(
 	git_repository *repo,
 	const char *partial_oid)
 {
-	unsigned int len = (unsigned int)strlen(partial_oid);
+	size_t len = strlen(partial_oid);
 	git_oid oid;
 	git_object *obj = NULL;
 	git_tree *tree = NULL;
@@ -30,7 +30,8 @@ int diff_file_fn(
 
 	GIT_UNUSED(progress);
 
-	e->	at_least_one_of_them_is_binary = delta->binary;
+	if (delta->binary)
+		e->at_least_one_of_them_is_binary = true;
 
 	e->files++;
 	switch (delta->status) {

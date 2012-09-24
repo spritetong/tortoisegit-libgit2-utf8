@@ -1,3 +1,4 @@
+#include "git2/ignore.h"
 #include "ignore.h"
 #include "path.h"
 
@@ -156,7 +157,7 @@ void git_ignore__free(git_ignores *ignores)
 static bool ignore_lookup_in_rules(
 	git_vector *rules, git_attr_path *path, int *ignored)
 {
-	unsigned int j;
+	size_t j;
 	git_attr_fnmatch *match;
 
 	git_vector_rforeach(rules, j, match) {
@@ -203,3 +204,55 @@ cleanup:
 	git_attr_path__free(&path);
 	return 0;
 }
+
+static int get_internal_ignores(git_attr_file **ign, git_repository *repo)
+{
+	int error;
+
+	if (!(error = git_attr_cache__init(repo)))
+		error = git_attr_cache__internal_file(repo, GIT_IGNORE_INTERNAL, ign);
+
+	return error;
+}
+
+int git_ignore_add_rule(
+	git_repository *repo,
+	const char *rules)
+{
+	int error;
+	git_attr_file *ign_internal;
+
+	if (!(error = get_internal_ignores(&ign_internal, repo)))
+		error = parse_ignore_file(repo, rules, ign_internal);
+
+	return error;
+}
+
+int git_ignore_clear_internal_rules(
+	git_repository *repo)
+{
+	int error;
+	git_attr_file *ign_internal;
+
+	if (!(error = get_internal_ignores(&ign_internal, repo)))
+		git_attr_file__clear_rules(ign_internal);
+
+	return error;
+}
+
+int git_ignore_path_is_ignored(
+	int *ignored,
+	git_repository *repo,
+	const char *path)
+{
+	int error;
+	git_ignores ignores;
+
+	if (git_ignore__for_path(repo, path, &ignores) < 0)
+		return -1;
+
+	error = git_ignore__lookup(&ignores, path, ignored);
+	git_ignore__free(&ignores);
+	return error;
+}
+

@@ -42,7 +42,7 @@ struct git_odb_backend {
 			void **, size_t *, git_otype *,
 			struct git_odb_backend *,
 			const git_oid *,
-			unsigned int);
+			size_t);
 
 	int (* read_header)(
 			size_t *, git_otype *,
@@ -71,6 +71,12 @@ struct git_odb_backend {
 			struct git_odb_backend *,
 			const git_oid *);
 
+	int (*foreach)(
+		       struct git_odb_backend *,
+		       int (*cb)(git_oid *oid, void *data),
+		       void *data
+		       );
+
 	void (* free)(struct git_odb_backend *);
 };
 
@@ -94,6 +100,7 @@ struct git_odb_stream {
 
 GIT_EXTERN(int) git_odb_backend_pack(git_odb_backend **backend_out, const char *objects_dir);
 GIT_EXTERN(int) git_odb_backend_loose(git_odb_backend **backend_out, const char *objects_dir, int compression_level, int do_fsync);
+GIT_EXTERN(int) git_odb_backend_one_pack(git_odb_backend **backend_out, const char *index_file);
 
 GIT_END_DECL
 

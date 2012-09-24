@@ -459,7 +459,7 @@ void test_status_worktree__status_file_without_index_or_workdir(void)
 	cl_git_pass(p_mkdir("wd", 0777));
 
 	cl_git_pass(git_repository_open(&repo, cl_fixture("testrepo.git")));
-	cl_git_pass(git_repository_set_workdir(repo, "wd"));
+	cl_git_pass(git_repository_set_workdir(repo, "wd", false));
 
 	cl_git_pass(git_index_open(&index, "empty-index"));
 	cl_assert_equal_i(0, git_index_entrycount(index));
@@ -484,7 +484,7 @@ static void fill_index_wth_head_entries(git_repository *repo, git_index *index)
 	cl_git_pass(git_commit_lookup(&commit, repo, &oid));
 	cl_git_pass(git_commit_tree(&tree, commit));
 
-	cl_git_pass(git_index_read_tree(index, tree));
+	cl_git_pass(git_index_read_tree(index, tree, NULL));
 	cl_git_pass(git_index_write(index));
 
 	git_tree_free(tree);
@@ -500,7 +500,7 @@ void test_status_worktree__status_file_with_clean_index_and_empty_workdir(void)
 	cl_git_pass(p_mkdir("wd", 0777));
 
 	cl_git_pass(git_repository_open(&repo, cl_fixture("testrepo.git")));
-	cl_git_pass(git_repository_set_workdir(repo, "wd"));
+	cl_git_pass(git_repository_set_workdir(repo, "wd", false));
 
 	cl_git_pass(git_index_open(&index, "my-index"));
 	fill_index_wth_head_entries(repo, index);
@@ -517,6 +517,85 @@ void test_status_worktree__status_file_with_clean_index_and_empty_workdir(void)
 	cl_git_pass(p_unlink("my-index"));
 }
 
+void test_status_worktree__bracket_in_filename(void)
+{
+	git_repository *repo;
+	git_index *index;
+	status_entry_single result;
+	unsigned int status_flags;
+	int error;
+
+	#define FILE_WITH_BRACKET "LICENSE[1].md"
+	#define FILE_WITHOUT_BRACKET "LICENSE1.md"
+
+	cl_git_pass(git_repository_init(&repo, "with_bracket", 0));
+	cl_git_mkfile("with_bracket/" FILE_WITH_BRACKET, "I have a bracket in my name\n");
+
+	/* file is new to working directory */
+
+	memset(&result, 0, sizeof(result));
+	cl_git_pass(git_status_foreach(repo, cb_status__single, &result));
+	cl_assert_equal_i(1, result.count);
+	cl_assert(result.status == GIT_STATUS_WT_NEW);
+
+	cl_git_pass(git_status_file(&status_flags, repo, FILE_WITH_BRACKET));
+	cl_assert(status_flags == GIT_STATUS_WT_NEW);
+
+	/* ignore the file */
+
+	cl_git_rewritefile("with_bracket/.gitignore", "*.md\n.gitignore\n");
+
+	memset(&result, 0, sizeof(result));
+	cl_git_pass(git_status_foreach(repo, cb_status__single, &result));
+	cl_assert_equal_i(2, result.count);
+	cl_assert(result.status == GIT_STATUS_IGNORED);
+
+	cl_git_pass(git_status_file(&status_flags, repo, FILE_WITH_BRACKET));
+	cl_assert(status_flags == GIT_STATUS_IGNORED);
+
+	/* don't ignore the file */
+
+	cl_git_rewritefile("with_bracket/.gitignore", ".gitignore\n");
+
+	memset(&result, 0, sizeof(result));
+	cl_git_pass(git_status_foreach(repo, cb_status__single, &result));
+	cl_assert_equal_i(2, result.count);
+	cl_assert(result.status == GIT_STATUS_WT_NEW);
+
+	cl_git_pass(git_status_file(&status_flags, repo, FILE_WITH_BRACKET));
+	cl_assert(status_flags == GIT_STATUS_WT_NEW);
+
+	/* add the file to the index */
+
+	cl_git_pass(git_repository_index(&index, repo));
+	cl_git_pass(git_index_add(index, FILE_WITH_BRACKET, 0));
+	cl_git_pass(git_index_write(index));
+
+	memset(&result, 0, sizeof(result));
+	cl_git_pass(git_status_foreach(repo, cb_status__single, &result));
+	cl_assert_equal_i(2, result.count);
+	cl_assert(result.status == GIT_STATUS_INDEX_NEW);
+
+	cl_git_pass(git_status_file(&status_flags, repo, FILE_WITH_BRACKET));
+	cl_assert(status_flags == GIT_STATUS_INDEX_NEW);
+
+	/* Create file without bracket */
+
+	cl_git_mkfile("with_bracket/" FILE_WITHOUT_BRACKET, "I have no bracket in my name!\n");
+
+	cl_git_pass(git_status_file(&status_flags, repo, FILE_WITHOUT_BRACKET));
+	cl_assert(status_flags == GIT_STATUS_WT_NEW);
+
+	cl_git_pass(git_status_file(&status_flags, repo, "LICENSE\\[1\\].md"));
+	cl_assert(status_flags == GIT_STATUS_INDEX_NEW);
+
+	error = git_status_file(&status_flags, repo, FILE_WITH_BRACKET);
+	cl_git_fail(error);
+	cl_assert_equal_i(GIT_EAMBIGUOUS, error);
+
+	git_index_free(index);
+	git_repository_free(repo);
+}
 
 void test_status_worktree__space_in_filename(void)
 {
@@ -604,7 +683,7 @@ static unsigned int filemode_statuses[] = {
 	GIT_STATUS_WT_NEW
 };
 
-static const size_t filemode_count = 8;
+static const int filemode_count = 8;
 
 void test_status_worktree__filemode_changes(void)
 {
@@ -618,7 +697,7 @@ void test_status_worktree__filemode_changes(void)
 	if (cl_is_chmod_supported())
 		cl_git_pass(git_config_set_bool(cfg, "core.filemode", true));
 	else {
-		unsigned int i;
+		int i;
 		cl_git_pass(git_config_set_bool(cfg, "core.filemode", false));
 
 		/* won't trust filesystem mode diffs, so these will appear unchanged */
@@ -646,4 +725,75 @@ void test_status_worktree__filemode_changes(void)
 	cl_assert_equal_i(0, counts.wrong_sorted_path);
 
 	git_config_free(cfg);
+}
+
+static int cb_status__expected_path(const char *p, unsigned int s, void *payload)
+{
+	const char *expected_path = (const char *)payload;
+
+	GIT_UNUSED(s);
+
+	if (payload == NULL)
+		cl_fail("Unexpected path");
+
+	cl_assert_equal_s(expected_path, p);
+
+	return 0;
+}
+
+void test_status_worktree__disable_pathspec_match(void)
+{
+	git_repository *repo;
+	git_status_options opts;
+	char *file_with_bracket = "LICENSE[1].md", 
+		*imaginary_file_with_bracket = "LICENSE[1-2].md";
+
+	cl_git_pass(git_repository_init(&repo, "pathspec", 0));
+	cl_git_mkfile("pathspec/LICENSE[1].md", "screaming bracket\n");
+	cl_git_mkfile("pathspec/LICENSE1.md", "no bracket\n");
+
+	memset(&opts, 0, sizeof(opts));
+	opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | 
+		GIT_STATUS_OPT_DISABLE_PATHSPEC_MATCH;
+	opts.pathspec.count = 1;
+	opts.pathspec.strings = &file_with_bracket;
+
+	cl_git_pass(
+		git_status_foreach_ext(repo, &opts, cb_status__expected_path, 
+		file_with_bracket)
+	);
+
+	/* Test passing a pathspec matching files in the workdir. */
+	/* Must not match because pathspecs are disabled. */ 
+	opts.pathspec.strings = &imaginary_file_with_bracket;
+	cl_git_pass(
+		git_status_foreach_ext(repo, &opts, cb_status__expected_path, NULL)
+	);
+
+	git_repository_free(repo);
+}
+
+
+static int cb_status__interrupt(const char *p, unsigned int s, void *payload)
+{
+	volatile int *count = (int *)payload;
+
+	GIT_UNUSED(p);
+	GIT_UNUSED(s);
+
+	(*count)++;
+
+	return (*count == 8);
+}
+
+void test_status_worktree__interruptable_foreach(void)
+{
+	int count = 0;
+	git_repository *repo = cl_git_sandbox_init("status");
+
+	cl_assert_equal_i(
+		GIT_EUSER, git_status_foreach(repo, cb_status__interrupt, &count)
+	);
+
+	cl_assert_equal_i(8, count);
 }

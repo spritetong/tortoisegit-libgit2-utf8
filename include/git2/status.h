@@ -38,11 +38,11 @@ enum {
  *
  * The callback is passed the path of the file, the status and the data
  * pointer passed to this function. If the callback returns something other
- * than 0, this function will return that value.
+ * than 0, this function will stop looping and return GIT_EUSER.
  *
  * @param repo a repository object
  * @param callback the function to call on each file
- * @return 0 on success or the return value of the callback that was non-zero
+ * @return 0 on success, GIT_EUSER on non-zero callback, or error code
  */
 GIT_EXTERN(int) git_status_foreach(
 	git_repository *repo,
@@ -96,6 +96,8 @@ typedef enum {
  *   the top-level directory will be included (with a trailing
  *   slash on the entry name).  Given this flag, the directory
  *   itself will not be included, but all the files in it will.
+ * - GIT_STATUS_OPT_DISABLE_PATHSPEC_MATCH indicates that the given
+ *   path will be treated as a literal path, and not as a pathspec.
  */
 
 enum {
@@ -104,6 +106,7 @@ enum {
 	GIT_STATUS_OPT_INCLUDE_UNMODIFIED = (1 << 2),
 	GIT_STATUS_OPT_EXCLUDE_SUBMODULES = (1 << 3),
 	GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS = (1 << 4),
+	GIT_STATUS_OPT_DISABLE_PATHSPEC_MATCH = (1 << 5),
 };
 
 /**

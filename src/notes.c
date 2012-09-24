@@ -33,7 +33,7 @@ static int find_subtree_in_current_level(
 		if (!git__ishex(git_tree_entry_name(entry)))
 			continue;
 
-		if (S_ISDIR(git_tree_entry_attributes(entry))
+		if (S_ISDIR(git_tree_entry_filemode(entry))
 			&& strlen(git_tree_entry_name(entry)) == 2 
 			&& !strncmp(git_tree_entry_name(entry), annotated_object_sha + fanout, 2))
 			return git_tree_lookup(out, repo, git_tree_entry_id(entry));
@@ -180,7 +180,7 @@ static int manipulate_note_in_tree_r(
 	subtree_name[2] = '\0';
 
 	error = tree_write(out, repo, parent, git_tree_id(new),
-			   subtree_name, 0040000);
+			   subtree_name, GIT_FILEMODE_TREE);
 
 
 cleanup:
@@ -252,7 +252,13 @@ static int insert_note_in_tree_enotfound_cb(git_tree **out,
 	GIT_UNUSED(current_error);
 
 	/* No existing fanout at this level, insert in place */
-	return tree_write(out, repo, parent, note_oid, annotated_object_sha + fanout, 0100644);
+	return tree_write(
+		out,
+		repo,
+		parent,
+		note_oid,
+		annotated_object_sha + fanout,
+		GIT_FILEMODE_BLOB);
 }
 
 static int note_write(git_oid *out,
@@ -522,13 +528,14 @@ static int process_entry_path(
 	int (*note_cb)(git_note_data *note_data, void *payload),
 	void *payload)
 {
-	int i = 0, j = 0, error = -1, len;
+	int error = -1;
+	size_t i = 0, j = 0, len;
 	git_buf buf = GIT_BUF_INIT;
 	git_note_data note_data;
 
-	if (git_buf_puts(&buf, entry_path) < 0)
+	if ((error = git_buf_puts(&buf, entry_path)) < 0)
 		goto cleanup;
-	
+
 	len = git_buf_len(&buf);
 
 	while (i < len) {
@@ -536,10 +543,9 @@ static int process_entry_path(
 			i++;
 			continue;
 		}
-		
+
 		if (git__fromhex(buf.ptr[i]) < 0) {
 			/* This is not a note entry */
-			error = 0;
 			goto cleanup;
 		}
 
@@ -555,16 +561,17 @@ static int process_entry_path(
 
 	if (j != GIT_OID_HEXSZ) {
 		/* This is not a note entry */
-		error = 0;
 		goto cleanup;
 	}
 
-	if (git_oid_fromstr(&note_data.annotated_object_oid, buf.ptr) < 0)
-		return -1;
+	if ((error = git_oid_fromstr(
+			&note_data.annotated_object_oid, buf.ptr)) < 0)
+		goto cleanup;
 
 	git_oid_cpy(&note_data.blob_oid, note_oid);
 
-	error = note_cb(&note_data, payload);
+	if (note_cb(&note_data, payload))
+		error = GIT_EUSER;
 
 cleanup:
 	git_buf_free(&buf);
@@ -577,34 +584,27 @@ int git_note_foreach(
 	int (*note_cb)(git_note_data *note_data, void *payload),
 	void *payload)
 {
-	int error = -1;
+	int error;
 	git_iterator *iter = NULL;
 	git_tree *tree = NULL;
 	git_commit *commit = NULL;
 	const git_index_entry *item;
 
-	if ((error = retrieve_note_tree_and_commit(&tree, &commit, repo, &notes_ref)) < 0)
-		goto cleanup;
+	if (!(error = retrieve_note_tree_and_commit(
+			&tree, &commit, repo, &notes_ref)) &&
+		!(error = git_iterator_for_tree(&iter, repo, tree)))
+		error = git_iterator_current(iter, &item);
 
-	if (git_iterator_for_tree(&iter, repo, tree) < 0)
-		goto cleanup;
+	while (!error && item) {
+		error = process_entry_path(item->path, &item->oid, note_cb, payload);
 
-	if (git_iterator_current(iter, &item) < 0)
-		goto cleanup;
-
-	while (item) {
-		if (process_entry_path(item->path, &item->oid, note_cb, payload) < 0)
-			goto cleanup;
-
-		if (git_iterator_advance(iter, &item) < 0)
-			goto cleanup;
+		if (!error)
+			error = git_iterator_advance(iter, &item);
 	}
 
-	error = 0;
-
-cleanup:
 	git_iterator_free(iter);
 	git_tree_free(tree);
 	git_commit_free(commit);
+
 	return error;
 }
