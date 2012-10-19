@@ -45,11 +45,13 @@ int git_protocol_store_refs(git_transport *t, int flushes)
 			return -1;
 		}
 
-		if (git_vector_insert(refs, pkt) < 0)
+		if (pkt->type != GIT_PKT_FLUSH && git_vector_insert(refs, pkt) < 0)
 			return -1;
 
-		if (pkt->type == GIT_PKT_FLUSH)
+		if (pkt->type == GIT_PKT_FLUSH) {
 			flush++;
+			git_pkt_free(pkt);
+		}
 	} while (flush < flushes);
 
 	return flush;
@@ -77,6 +79,12 @@ int git_protocol_detect_caps(git_pkt_ref *pkt, git_transport_caps *caps)
 		if(!git__prefixcmp(ptr, GIT_CAP_MULTI_ACK)) {
 			caps->common = caps->multi_ack = 1;
 			ptr += strlen(GIT_CAP_MULTI_ACK);
+			continue;
+		}
+
+		if(!git__prefixcmp(ptr, GIT_CAP_INCLUDE_TAG)) {
+			caps->common = caps->include_tag = 1;
+			ptr += strlen(GIT_CAP_INCLUDE_TAG);
 			continue;
 		}
 

@@ -1,5 +1,6 @@
 #include "clar_libgit2.h"
 #include "diff_helpers.h"
+#include "repository.h"
 
 static git_repository *g_repo = NULL;
 
@@ -17,6 +18,7 @@ void test_diff_workdir__to_index(void)
 	git_diff_options opts = {0};
 	git_diff_list *diff = NULL;
 	diff_expects exp;
+	int use_iterator;
 
 	g_repo = cl_git_sandbox_init("status");
 
@@ -24,33 +26,39 @@ void test_diff_workdir__to_index(void)
 	opts.interhunk_lines = 1;
 	opts.flags |= GIT_DIFF_INCLUDE_IGNORED | GIT_DIFF_INCLUDE_UNTRACKED;
 
-	memset(&exp, 0, sizeof(exp));
-
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
 
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	/* to generate these values:
-	 * - cd to tests/resources/status,
-	 * - mv .gitted .git
-	 * - git diff --name-status
-	 * - git diff
-	 * - mv .git .gitted
-	 */
-	cl_assert_equal_i(13, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(4, exp.file_dels);
-	cl_assert_equal_i(4, exp.file_mods);
-	cl_assert_equal_i(1, exp.file_ignored);
-	cl_assert_equal_i(4, exp.file_untracked);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert_equal_i(8, exp.hunks);
+		/* to generate these values:
+		 * - cd to tests/resources/status,
+		 * - mv .gitted .git
+		 * - git diff --name-status
+		 * - git diff
+		 * - mv .git .gitted
+		 */
+		cl_assert_equal_i(13, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(4, exp.file_dels);
+		cl_assert_equal_i(4, exp.file_mods);
+		cl_assert_equal_i(1, exp.file_ignored);
+		cl_assert_equal_i(4, exp.file_untracked);
 
-	cl_assert_equal_i(14, exp.lines);
-	cl_assert_equal_i(5, exp.line_ctxt);
-	cl_assert_equal_i(4, exp.line_adds);
-	cl_assert_equal_i(5, exp.line_dels);
+		cl_assert_equal_i(8, exp.hunks);
+
+		cl_assert_equal_i(14, exp.lines);
+		cl_assert_equal_i(5, exp.line_ctxt);
+		cl_assert_equal_i(4, exp.line_adds);
+		cl_assert_equal_i(5, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 }
@@ -65,6 +73,7 @@ void test_diff_workdir__to_tree(void)
 	git_diff_list *diff = NULL;
 	git_diff_list *diff2 = NULL;
 	diff_expects exp;
+	int use_iterator;
 
 	g_repo = cl_git_sandbox_init("status");
 
@@ -74,8 +83,6 @@ void test_diff_workdir__to_tree(void)
 	opts.context_lines = 3;
 	opts.interhunk_lines = 1;
 	opts.flags |= GIT_DIFF_INCLUDE_IGNORED | GIT_DIFF_INCLUDE_UNTRACKED;
-
-	memset(&exp, 0, sizeof(exp));
 
 	/* You can't really generate the equivalent of git_diff_workdir_to_tree()
 	 * using C git.  It really wants to interpose the index into the diff.
@@ -89,15 +96,23 @@ void test_diff_workdir__to_tree(void)
 	 */
 	cl_git_pass(git_diff_workdir_to_tree(g_repo, &opts, a, &diff));
 
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	cl_assert_equal_i(14, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(4, exp.file_dels);
-	cl_assert_equal_i(4, exp.file_mods);
-	cl_assert_equal_i(1, exp.file_ignored);
-	cl_assert_equal_i(5, exp.file_untracked);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(14, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(4, exp.file_dels);
+		cl_assert_equal_i(4, exp.file_mods);
+		cl_assert_equal_i(1, exp.file_ignored);
+		cl_assert_equal_i(5, exp.file_untracked);
+	}
 
 	/* Since there is no git diff equivalent, let's just assume that the
 	 * text diffs produced by git_diff_foreach are accurate here.  We will
@@ -117,22 +132,30 @@ void test_diff_workdir__to_tree(void)
 	cl_git_pass(git_diff_merge(diff, diff2));
 	git_diff_list_free(diff2);
 
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	cl_assert_equal_i(15, exp.files);
-	cl_assert_equal_i(2, exp.file_adds);
-	cl_assert_equal_i(5, exp.file_dels);
-	cl_assert_equal_i(4, exp.file_mods);
-	cl_assert_equal_i(1, exp.file_ignored);
-	cl_assert_equal_i(3, exp.file_untracked);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert_equal_i(11, exp.hunks);
+		cl_assert_equal_i(15, exp.files);
+		cl_assert_equal_i(2, exp.file_adds);
+		cl_assert_equal_i(5, exp.file_dels);
+		cl_assert_equal_i(4, exp.file_mods);
+		cl_assert_equal_i(1, exp.file_ignored);
+		cl_assert_equal_i(3, exp.file_untracked);
 
-	cl_assert_equal_i(17, exp.lines);
-	cl_assert_equal_i(4, exp.line_ctxt);
-	cl_assert_equal_i(8, exp.line_adds);
-	cl_assert_equal_i(5, exp.line_dels);
+		cl_assert_equal_i(11, exp.hunks);
+
+		cl_assert_equal_i(17, exp.lines);
+		cl_assert_equal_i(4, exp.line_ctxt);
+		cl_assert_equal_i(8, exp.line_adds);
+		cl_assert_equal_i(5, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 	diff = NULL;
@@ -146,22 +169,30 @@ void test_diff_workdir__to_tree(void)
 	cl_git_pass(git_diff_merge(diff, diff2));
 	git_diff_list_free(diff2);
 
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	cl_assert_equal_i(16, exp.files);
-	cl_assert_equal_i(5, exp.file_adds);
-	cl_assert_equal_i(4, exp.file_dels);
-	cl_assert_equal_i(3, exp.file_mods);
-	cl_assert_equal_i(1, exp.file_ignored);
-	cl_assert_equal_i(3, exp.file_untracked);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert_equal_i(12, exp.hunks);
+		cl_assert_equal_i(16, exp.files);
+		cl_assert_equal_i(5, exp.file_adds);
+		cl_assert_equal_i(4, exp.file_dels);
+		cl_assert_equal_i(3, exp.file_mods);
+		cl_assert_equal_i(1, exp.file_ignored);
+		cl_assert_equal_i(3, exp.file_untracked);
 
-	cl_assert_equal_i(19, exp.lines);
-	cl_assert_equal_i(3, exp.line_ctxt);
-	cl_assert_equal_i(12, exp.line_adds);
-	cl_assert_equal_i(4, exp.line_dels);
+		cl_assert_equal_i(12, exp.hunks);
+
+		cl_assert_equal_i(19, exp.lines);
+		cl_assert_equal_i(3, exp.line_ctxt);
+		cl_assert_equal_i(12, exp.line_adds);
+		cl_assert_equal_i(4, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 
@@ -175,6 +206,7 @@ void test_diff_workdir__to_index_with_pathspec(void)
 	git_diff_list *diff = NULL;
 	diff_expects exp;
 	char *pathspec = NULL;
+	int use_iterator;
 
 	g_repo = cl_git_sandbox_init("status");
 
@@ -184,62 +216,93 @@ void test_diff_workdir__to_index_with_pathspec(void)
 	opts.pathspec.strings = &pathspec;
 	opts.pathspec.count   = 1;
 
-	memset(&exp, 0, sizeof(exp));
-
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
-	cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
 
-	cl_assert_equal_i(13, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(4, exp.file_dels);
-	cl_assert_equal_i(4, exp.file_mods);
-	cl_assert_equal_i(1, exp.file_ignored);
-	cl_assert_equal_i(4, exp.file_untracked);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, NULL, NULL));
+		else
+			cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
+
+		cl_assert_equal_i(13, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(4, exp.file_dels);
+		cl_assert_equal_i(4, exp.file_mods);
+		cl_assert_equal_i(1, exp.file_ignored);
+		cl_assert_equal_i(4, exp.file_untracked);
+	}
 
 	git_diff_list_free(diff);
 
-	memset(&exp, 0, sizeof(exp));
 	pathspec = "modified_file";
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
-	cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
 
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(0, exp.file_ignored);
-	cl_assert_equal_i(0, exp.file_untracked);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, NULL, NULL));
+		else
+			cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(0, exp.file_ignored);
+		cl_assert_equal_i(0, exp.file_untracked);
+	}
 
 	git_diff_list_free(diff);
 
-	memset(&exp, 0, sizeof(exp));
 	pathspec = "subdir";
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
-	cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
 
-	cl_assert_equal_i(3, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(1, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(0, exp.file_ignored);
-	cl_assert_equal_i(1, exp.file_untracked);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, NULL, NULL));
+		else
+			cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
+
+		cl_assert_equal_i(3, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(1, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(0, exp.file_ignored);
+		cl_assert_equal_i(1, exp.file_untracked);
+	}
 
 	git_diff_list_free(diff);
 
-	memset(&exp, 0, sizeof(exp));
 	pathspec = "*_deleted";
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
-	cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
 
-	cl_assert_equal_i(2, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(2, exp.file_dels);
-	cl_assert_equal_i(0, exp.file_mods);
-	cl_assert_equal_i(0, exp.file_ignored);
-	cl_assert_equal_i(0, exp.file_untracked);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, NULL, NULL));
+		else
+			cl_git_pass(git_diff_foreach(diff, &exp, diff_file_fn, NULL, NULL));
+
+		cl_assert_equal_i(2, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(2, exp.file_dels);
+		cl_assert_equal_i(0, exp.file_mods);
+		cl_assert_equal_i(0, exp.file_ignored);
+		cl_assert_equal_i(0, exp.file_untracked);
+	}
 
 	git_diff_list_free(diff);
 }
@@ -249,6 +312,7 @@ void test_diff_workdir__filemode_changes(void)
 	git_config *cfg;
 	git_diff_list *diff = NULL;
 	diff_expects exp;
+	int use_iterator;
 
 	if (!cl_is_chmod_supported())
 		return;
@@ -262,13 +326,20 @@ void test_diff_workdir__filemode_changes(void)
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, NULL, &diff));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	cl_assert_equal_i(0, exp.files);
-	cl_assert_equal_i(0, exp.file_mods);
-	cl_assert_equal_i(0, exp.hunks);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(0, exp.files);
+		cl_assert_equal_i(0, exp.file_mods);
+		cl_assert_equal_i(0, exp.hunks);
+	}
 
 	git_diff_list_free(diff);
 
@@ -278,13 +349,20 @@ void test_diff_workdir__filemode_changes(void)
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, NULL, &diff));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(0, exp.hunks);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(0, exp.hunks);
+	}
 
 	git_diff_list_free(diff);
 
@@ -347,6 +425,7 @@ void test_diff_workdir__head_index_and_workdir_all_differ(void)
 	diff_expects exp;
 	char *pathspec = "staged_changes_modified_file";
 	git_tree *tree;
+	int use_iterator;
 
 	/* For this file,
 	 * - head->index diff has 1 line of context, 1 line of diff
@@ -366,46 +445,70 @@ void test_diff_workdir__head_index_and_workdir_all_differ(void)
 	cl_git_pass(git_diff_index_to_tree(g_repo, &opts, tree, &diff_i2t));
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff_w2i));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(1, exp.hunks);
-	cl_assert_equal_i(2, exp.lines);
-	cl_assert_equal_i(1, exp.line_ctxt);
-	cl_assert_equal_i(1, exp.line_adds);
-	cl_assert_equal_i(0, exp.line_dels);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff_w2i, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(1, exp.hunks);
-	cl_assert_equal_i(3, exp.lines);
-	cl_assert_equal_i(2, exp.line_ctxt);
-	cl_assert_equal_i(1, exp.line_adds);
-	cl_assert_equal_i(0, exp.line_dels);
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(1, exp.hunks);
+		cl_assert_equal_i(2, exp.lines);
+		cl_assert_equal_i(1, exp.line_ctxt);
+		cl_assert_equal_i(1, exp.line_adds);
+		cl_assert_equal_i(0, exp.line_dels);
+	}
+
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff_w2i, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff_w2i, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(1, exp.hunks);
+		cl_assert_equal_i(3, exp.lines);
+		cl_assert_equal_i(2, exp.line_ctxt);
+		cl_assert_equal_i(1, exp.line_adds);
+		cl_assert_equal_i(0, exp.line_dels);
+	}
 
 	cl_git_pass(git_diff_merge(diff_i2t, diff_w2i));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(1, exp.hunks);
-	cl_assert_equal_i(3, exp.lines);
-	cl_assert_equal_i(1, exp.line_ctxt);
-	cl_assert_equal_i(2, exp.line_adds);
-	cl_assert_equal_i(0, exp.line_dels);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff_i2t, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(1, exp.hunks);
+		cl_assert_equal_i(3, exp.lines);
+		cl_assert_equal_i(1, exp.line_ctxt);
+		cl_assert_equal_i(2, exp.line_adds);
+		cl_assert_equal_i(0, exp.line_dels);
+	}
 
 	git_diff_list_free(diff_i2t);
 	git_diff_list_free(diff_w2i);
@@ -419,6 +522,7 @@ void test_diff_workdir__eof_newline_changes(void)
 	git_diff_list *diff = NULL;
 	diff_expects exp;
 	char *pathspec = "current_file";
+	int use_iterator;
 
 	g_repo = cl_git_sandbox_init("status");
 
@@ -427,18 +531,26 @@ void test_diff_workdir__eof_newline_changes(void)
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(0, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(0, exp.file_mods);
-	cl_assert_equal_i(0, exp.hunks);
-	cl_assert_equal_i(0, exp.lines);
-	cl_assert_equal_i(0, exp.line_ctxt);
-	cl_assert_equal_i(0, exp.line_adds);
-	cl_assert_equal_i(0, exp.line_dels);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(0, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(0, exp.file_mods);
+		cl_assert_equal_i(0, exp.hunks);
+		cl_assert_equal_i(0, exp.lines);
+		cl_assert_equal_i(0, exp.line_ctxt);
+		cl_assert_equal_i(0, exp.line_adds);
+		cl_assert_equal_i(0, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 
@@ -446,18 +558,26 @@ void test_diff_workdir__eof_newline_changes(void)
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(1, exp.hunks);
-	cl_assert_equal_i(2, exp.lines);
-	cl_assert_equal_i(1, exp.line_ctxt);
-	cl_assert_equal_i(1, exp.line_adds);
-	cl_assert_equal_i(0, exp.line_dels);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(1, exp.hunks);
+		cl_assert_equal_i(2, exp.lines);
+		cl_assert_equal_i(1, exp.line_ctxt);
+		cl_assert_equal_i(1, exp.line_adds);
+		cl_assert_equal_i(0, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 
@@ -465,18 +585,26 @@ void test_diff_workdir__eof_newline_changes(void)
 
 	cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
 
-	memset(&exp, 0, sizeof(exp));
-	cl_git_pass(git_diff_foreach(
-		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
-	cl_assert_equal_i(1, exp.files);
-	cl_assert_equal_i(0, exp.file_adds);
-	cl_assert_equal_i(0, exp.file_dels);
-	cl_assert_equal_i(1, exp.file_mods);
-	cl_assert_equal_i(1, exp.hunks);
-	cl_assert_equal_i(3, exp.lines);
-	cl_assert_equal_i(0, exp.line_ctxt);
-	cl_assert_equal_i(1, exp.line_adds);
-	cl_assert_equal_i(2, exp.line_dels);
+	for (use_iterator = 0; use_iterator <= 1; use_iterator++) {
+		memset(&exp, 0, sizeof(exp));
+
+		if (use_iterator)
+			cl_git_pass(diff_foreach_via_iterator(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+		else
+			cl_git_pass(git_diff_foreach(
+				diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+		cl_assert_equal_i(1, exp.files);
+		cl_assert_equal_i(0, exp.file_adds);
+		cl_assert_equal_i(0, exp.file_dels);
+		cl_assert_equal_i(1, exp.file_mods);
+		cl_assert_equal_i(1, exp.hunks);
+		cl_assert_equal_i(3, exp.lines);
+		cl_assert_equal_i(0, exp.line_ctxt);
+		cl_assert_equal_i(1, exp.line_adds);
+		cl_assert_equal_i(2, exp.line_dels);
+	}
 
 	git_diff_list_free(diff);
 }
@@ -543,3 +671,167 @@ void test_diff_workdir__eof_newline_changes(void)
  *
  * Expect 13 files, 0 ADD, 4 DEL, 4 MOD, 1 IGN, 4 UNTR
  */
+
+
+void test_diff_workdir__larger_hunks(void)
+{
+	const char *a_commit = "d70d245ed97ed2aa596dd1af6536e4bfdb047b69";
+	const char *b_commit = "7a9e0b02e63179929fed24f0a3e0f19168114d10";
+	git_tree *a, *b;
+	git_diff_options opts = {0};
+	size_t i, d, num_d, h, num_h, l, num_l, header_len, line_len;
+
+	g_repo = cl_git_sandbox_init("diff");
+
+	cl_assert((a = resolve_commit_oid_to_tree(g_repo, a_commit)) != NULL);
+	cl_assert((b = resolve_commit_oid_to_tree(g_repo, b_commit)) != NULL);
+
+	opts.context_lines = 1;
+	opts.interhunk_lines = 0;
+
+	for (i = 0; i <= 2; ++i) {
+		git_diff_list *diff = NULL;
+		git_diff_patch *patch;
+		const git_diff_range *range;
+		const char *header, *line;
+		char origin;
+
+		/* okay, this is a bit silly, but oh well */
+		switch (i) {
+		case 0:
+			cl_git_pass(git_diff_workdir_to_index(g_repo, &opts, &diff));
+			break;
+		case 1:
+			cl_git_pass(git_diff_workdir_to_tree(g_repo, &opts, a, &diff));
+			break;
+		case 2:
+			cl_git_pass(git_diff_workdir_to_tree(g_repo, &opts, b, &diff));
+			break;
+		}
+
+		num_d = git_diff_num_deltas(diff);
+		cl_assert_equal_i(2, (int)num_d);
+
+		for (d = 0; d < num_d; ++d) {
+			cl_git_pass(git_diff_get_patch(&patch, NULL, diff, d));
+			cl_assert(patch);
+
+			num_h = git_diff_patch_num_hunks(patch);
+			for (h = 0; h < num_h; h++) {
+				cl_git_pass(git_diff_patch_get_hunk(
+					&range, &header, &header_len, &num_l, patch, h));
+
+				for (l = 0; l < num_l; ++l) {
+					cl_git_pass(git_diff_patch_get_line_in_hunk(
+						&origin, &line, &line_len, NULL, NULL, patch, h, l));
+					cl_assert(line);
+				}
+
+				/* confirm fail after the last item */
+				cl_git_fail(git_diff_patch_get_line_in_hunk(
+					&origin, &line, &line_len, NULL, NULL, patch, h, num_l));
+			}
+
+			/* confirm fail after the last item */
+			cl_git_fail(git_diff_patch_get_hunk(
+				&range, &header, &header_len, &num_l, patch, num_h));
+
+			git_diff_patch_free(patch);
+		}
+
+		git_diff_list_free(diff);
+	}
+
+	git_tree_free(a);
+	git_tree_free(b);
+}
+
+/* Set up a test that exercises this code. The easiest test using existing
+ * test data is probably to create a sandbox of submod2 and then run a
+ * git_diff_workdir_to_tree against tree
+ * 873585b94bdeabccea991ea5e3ec1a277895b698. As for what you should actually
+ * test, you can start by just checking that the number of lines of diff
+ * content matches the actual output of git diff. That will at least
+ * demonstrate that the submodule content is being used to generate somewhat
+ * comparable outputs. It is a test that would fail without this code and
+ * will succeed with it.
+ */
+
+#include "../submodule/submodule_helpers.h"
+
+void test_diff_workdir__submodules(void)
+{
+	const char *a_commit = "873585b94bdeabccea991ea5e3ec1a277895b698";
+	git_tree *a;
+	git_diff_options opts = {0};
+	git_diff_list *diff = NULL;
+	diff_expects exp;
+
+	g_repo = cl_git_sandbox_init("submod2");
+
+	cl_fixture_sandbox("submod2_target");
+	p_rename("submod2_target/.gitted", "submod2_target/.git");
+
+	rewrite_gitmodules(git_repository_workdir(g_repo));
+	p_rename("submod2/not_submodule/.gitted", "submod2/not_submodule/.git");
+
+	cl_fixture_cleanup("submod2_target");
+
+	a = resolve_commit_oid_to_tree(g_repo, a_commit);
+
+	opts.flags =
+		GIT_DIFF_INCLUDE_UNTRACKED |
+		GIT_DIFF_RECURSE_UNTRACKED_DIRS |
+		GIT_DIFF_INCLUDE_UNTRACKED_CONTENT;
+
+	cl_git_pass(git_diff_workdir_to_tree(g_repo, &opts, a, &diff));
+
+	/* diff_print(stderr, diff); */
+
+	/* essentially doing: git diff 873585b94bdeabccea991ea5e3ec1a277895b698 */
+
+	memset(&exp, 0, sizeof(exp));
+	cl_git_pass(git_diff_foreach(
+		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
+
+	/* the following differs from "git diff 873585" by one "untracked" file
+	 * because the diff list includes the "not_submodule/" directory which
+	 * is not displayed in the text diff.
+	 */
+
+	cl_assert_equal_i(10, exp.files);
+
+	cl_assert_equal_i(0, exp.file_adds);
+	cl_assert_equal_i(0, exp.file_dels);
+	cl_assert_equal_i(1, exp.file_mods);
+	cl_assert_equal_i(0, exp.file_ignored);
+	cl_assert_equal_i(9, exp.file_untracked);
+
+	/* the following numbers match "git diff 873585" exactly */
+
+	cl_assert_equal_i(9, exp.hunks);
+
+	cl_assert_equal_i(33, exp.lines);
+	cl_assert_equal_i(2, exp.line_ctxt);
+	cl_assert_equal_i(30, exp.line_adds);
+	cl_assert_equal_i(1, exp.line_dels);
+
+	git_diff_list_free(diff);
+	git_tree_free(a);
+}
+
+void test_diff_workdir__cannot_diff_against_a_bare_repository(void)
+{
+	git_diff_options opts = {0};
+	git_diff_list *diff = NULL;
+	git_tree *tree;
+
+	g_repo = cl_git_sandbox_init("testrepo.git");
+
+	cl_assert_equal_i(GIT_EBAREREPO, git_diff_workdir_to_index(g_repo, &opts, &diff));
+
+	cl_git_pass(git_repository_head_tree(&tree, g_repo));
+	cl_assert_equal_i(GIT_EBAREREPO, git_diff_workdir_to_tree(g_repo, &opts, tree, &diff));
+
+	git_tree_free(tree);
+}

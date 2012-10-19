@@ -39,17 +39,17 @@ void test_diff_tree__0(void)
 	cl_git_pass(git_diff_foreach(
 		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert(exp.files == 5);
-	cl_assert(exp.file_adds == 2);
-	cl_assert(exp.file_dels == 1);
-	cl_assert(exp.file_mods == 2);
+	cl_assert_equal_i(5, exp.files);
+	cl_assert_equal_i(2, exp.file_adds);
+	cl_assert_equal_i(1, exp.file_dels);
+	cl_assert_equal_i(2, exp.file_mods);
 
-	cl_assert(exp.hunks == 5);
+	cl_assert_equal_i(5, exp.hunks);
 
-	cl_assert(exp.lines == 7 + 24 + 1 + 6 + 6);
-	cl_assert(exp.line_ctxt == 1);
-	cl_assert(exp.line_adds == 24 + 1 + 5 + 5);
-	cl_assert(exp.line_dels == 7 + 1);
+	cl_assert_equal_i(7 + 24 + 1 + 6 + 6, exp.lines);
+	cl_assert_equal_i(1, exp.line_ctxt);
+	cl_assert_equal_i(24 + 1 + 5 + 5, exp.line_adds);
+	cl_assert_equal_i(7 + 1, exp.line_dels);
 
 	git_diff_list_free(diff);
 	diff = NULL;
@@ -61,17 +61,17 @@ void test_diff_tree__0(void)
 	cl_git_pass(git_diff_foreach(
 		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert(exp.files == 2);
-	cl_assert(exp.file_adds == 0);
-	cl_assert(exp.file_dels == 0);
-	cl_assert(exp.file_mods == 2);
+	cl_assert_equal_i(2, exp.files);
+	cl_assert_equal_i(0, exp.file_adds);
+	cl_assert_equal_i(0, exp.file_dels);
+	cl_assert_equal_i(2, exp.file_mods);
 
-	cl_assert(exp.hunks == 2);
+	cl_assert_equal_i(2, exp.hunks);
 
-	cl_assert(exp.lines == 8 + 15);
-	cl_assert(exp.line_ctxt == 1);
-	cl_assert(exp.line_adds == 1);
-	cl_assert(exp.line_dels == 7 + 14);
+	cl_assert_equal_i(8 + 15, exp.lines);
+	cl_assert_equal_i(1, exp.line_ctxt);
+	cl_assert_equal_i(1, exp.line_adds);
+	cl_assert_equal_i(7 + 14, exp.line_dels);
 
 	git_diff_list_free(diff);
 
@@ -113,16 +113,16 @@ void test_diff_tree__options(void)
 	 */
 	diff_expects test_expects[] = {
 		/* a vs b tests */
-		{ 5, 3, 0, 2, 0, 0, 0, 4, 0, 0, 51, 2, 46, 3 },
-		{ 5, 3, 0, 2, 0, 0, 0, 4, 0, 0, 53, 4, 46, 3 },
-		{ 5, 0, 3, 2, 0, 0, 0, 4, 0, 0, 52, 3, 3, 46 },
-		{ 5, 3, 0, 2, 0, 0, 0, 5, 0, 0, 54, 3, 47, 4 },
+		{ 5, 0, 3, 0, 2, 0, 0, 0, 4, 0, 0, 51, 2, 46, 3 },
+		{ 5, 0, 3, 0, 2, 0, 0, 0, 4, 0, 0, 53, 4, 46, 3 },
+		{ 5, 0, 0, 3, 2, 0, 0, 0, 4, 0, 0, 52, 3, 3, 46 },
+		{ 5, 0, 3, 0, 2, 0, 0, 0, 5, 0, 0, 54, 3, 47, 4 },
 		/* c vs d tests */
-		{ 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 22, 9, 10, 3 },
-		{ 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 19, 12, 7, 0 },
-		{ 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 20, 11, 8, 1 },
-		{ 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 20, 11, 8, 1 },
-		{ 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 18, 11, 0, 7 },
+		{ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 22, 9, 10, 3 },
+		{ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 19, 12, 7, 0 },
+		{ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 20, 11, 8, 1 },
+		{ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 20, 11, 8, 1 },
+		{ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 18, 11, 0, 7 },
 		{ 0 },
 	};
 	diff_expects *expected;
@@ -192,17 +192,17 @@ void test_diff_tree__bare(void)
 	cl_git_pass(git_diff_foreach(
 		diff, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert(exp.files == 3);
-	cl_assert(exp.file_adds == 2);
-	cl_assert(exp.file_dels == 0);
-	cl_assert(exp.file_mods == 1);
+	cl_assert_equal_i(3, exp.files);
+	cl_assert_equal_i(2, exp.file_adds);
+	cl_assert_equal_i(0, exp.file_dels);
+	cl_assert_equal_i(1, exp.file_mods);
 
-	cl_assert(exp.hunks == 3);
+	cl_assert_equal_i(3, exp.hunks);
 
-	cl_assert(exp.lines == 4);
-	cl_assert(exp.line_ctxt == 0);
-	cl_assert(exp.line_adds == 3);
-	cl_assert(exp.line_dels == 1);
+	cl_assert_equal_i(4, exp.lines);
+	cl_assert_equal_i(0, exp.line_ctxt);
+	cl_assert_equal_i(3, exp.line_adds);
+	cl_assert_equal_i(1, exp.line_dels);
 
 	git_diff_list_free(diff);
 	git_tree_free(a);
@@ -242,17 +242,78 @@ void test_diff_tree__merge(void)
 	cl_git_pass(git_diff_foreach(
 		diff1, &exp, diff_file_fn, diff_hunk_fn, diff_line_fn));
 
-	cl_assert(exp.files == 6);
-	cl_assert(exp.file_adds == 2);
-	cl_assert(exp.file_dels == 1);
-	cl_assert(exp.file_mods == 3);
+	cl_assert_equal_i(6, exp.files);
+	cl_assert_equal_i(2, exp.file_adds);
+	cl_assert_equal_i(1, exp.file_dels);
+	cl_assert_equal_i(3, exp.file_mods);
 
-	cl_assert(exp.hunks == 6);
+	cl_assert_equal_i(6, exp.hunks);
 
-	cl_assert(exp.lines == 59);
-	cl_assert(exp.line_ctxt == 1);
-	cl_assert(exp.line_adds == 36);
-	cl_assert(exp.line_dels == 22);
+	cl_assert_equal_i(59, exp.lines);
+	cl_assert_equal_i(1, exp.line_ctxt);
+	cl_assert_equal_i(36, exp.line_adds);
+	cl_assert_equal_i(22, exp.line_dels);
 
 	git_diff_list_free(diff1);
+}
+
+void test_diff_tree__larger_hunks(void)
+{
+	const char *a_commit = "d70d245ed97ed2aa596dd1af6536e4bfdb047b69";
+	const char *b_commit = "7a9e0b02e63179929fed24f0a3e0f19168114d10";
+	git_tree *a, *b;
+	git_diff_options opts = {0};
+	git_diff_list *diff = NULL;
+	size_t d, num_d, h, num_h, l, num_l, header_len, line_len;
+	const git_diff_delta *delta;
+	git_diff_patch *patch;
+	const git_diff_range *range;
+	const char *header, *line;
+	char origin;
+
+	g_repo = cl_git_sandbox_init("diff");
+
+	cl_assert((a = resolve_commit_oid_to_tree(g_repo, a_commit)) != NULL);
+	cl_assert((b = resolve_commit_oid_to_tree(g_repo, b_commit)) != NULL);
+
+	opts.context_lines = 1;
+	opts.interhunk_lines = 0;
+
+	cl_git_pass(git_diff_tree_to_tree(g_repo, &opts, a, b, &diff));
+
+	num_d = git_diff_num_deltas(diff);
+	for (d = 0; d < num_d; ++d) {
+		cl_git_pass(git_diff_get_patch(&patch, &delta, diff, d));
+		cl_assert(patch && delta);
+
+		num_h = git_diff_patch_num_hunks(patch);
+		for (h = 0; h < num_h; h++) {
+			cl_git_pass(git_diff_patch_get_hunk(
+				&range, &header, &header_len, &num_l, patch, h));
+
+			for (l = 0; l < num_l; ++l) {
+				cl_git_pass(git_diff_patch_get_line_in_hunk(
+					&origin, &line, &line_len, NULL, NULL, patch, h, l));
+				cl_assert(line);
+			}
+
+			cl_git_fail(git_diff_patch_get_line_in_hunk(
+				&origin, &line, &line_len, NULL, NULL, patch, h, num_l));
+		}
+
+		cl_git_fail(git_diff_patch_get_hunk(
+			&range, &header, &header_len, &num_l, patch, num_h));
+
+		git_diff_patch_free(patch);
+	}
+
+	cl_git_fail(git_diff_get_patch(&patch, &delta, diff, num_d));
+
+	cl_assert_equal_i(2, (int)num_d);
+
+	git_diff_list_free(diff);
+	diff = NULL;
+
+	git_tree_free(a);
+	git_tree_free(b);
 }

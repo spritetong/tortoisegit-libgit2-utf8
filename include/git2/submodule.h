@@ -120,8 +120,15 @@ typedef enum {
 } git_submodule_status_t;
 
 #define GIT_SUBMODULE_STATUS_IS_UNMODIFIED(S) \
-	(((S) & ~(GIT_SUBMODULE_STATUS_IN_HEAD | GIT_SUBMODULE_STATUS_IN_INDEX | \
-	GIT_SUBMODULE_STATUS_IN_CONFIG | GIT_SUBMODULE_STATUS_IN_WD)) == 0)
+	(((S) & ~(GIT_SUBMODULE_STATUS_IN_HEAD | \
+	GIT_SUBMODULE_STATUS_IN_INDEX | \
+	GIT_SUBMODULE_STATUS_IN_CONFIG | \
+	GIT_SUBMODULE_STATUS_IN_WD)) == 0)
+
+#define GIT_SUBMODULE_STATUS_IS_WD_DIRTY(S) \
+	(((S) & (GIT_SUBMODULE_STATUS_WD_INDEX_MODIFIED | \
+	GIT_SUBMODULE_STATUS_WD_WD_MODIFIED | \
+	GIT_SUBMODULE_STATUS_WD_UNTRACKED)) != 0)
 
 /**
  * Lookup submodule information by name or path.
@@ -394,6 +401,35 @@ GIT_EXTERN(git_submodule_update_t) git_submodule_update(
 GIT_EXTERN(git_submodule_update_t) git_submodule_set_update(
 	git_submodule *submodule,
 	git_submodule_update_t update);
+
+/**
+ * Read the fetchRecurseSubmodules rule for a submodule.
+ *
+ * This accesses the submodule.<name>.fetchRecurseSubmodules value for
+ * the submodule that controls fetching behavior for the submodule.
+ *
+ * Note that at this time, libgit2 does not honor this setting and the
+ * fetch functionality current ignores submodules.
+ *
+ * @return 0 if fetchRecurseSubmodules is false, 1 if true
+ */
+GIT_EXTERN(int) git_submodule_fetch_recurse_submodules(
+	git_submodule *submodule);
+
+/**
+ * Set the fetchRecurseSubmodules rule for a submodule.
+ *
+ * This sets the submodule.<name>.fetchRecurseSubmodules value for
+ * the submodule.  You should call `git_submodule_save()` if you want
+ * to persist the new value.
+ *
+ * @param submodule The submodule to modify
+ * @param fetch_recurse_submodules Boolean value
+ * @return old value for fetchRecurseSubmodules
+ */
+GIT_EXTERN(int) git_submodule_set_fetch_recurse_submodules(
+	git_submodule *submodule,
+	int fetch_recurse_submodules);
 
 /**
  * Copy submodule info into ".git/config" file.

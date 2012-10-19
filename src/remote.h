@@ -13,6 +13,8 @@
 #include "transport.h"
 #include "repository.h"
 
+#define GIT_REMOTE_ORIGIN "origin"
+
 struct git_remote {
 	char *name;
 	char *url;
@@ -24,7 +26,8 @@ struct git_remote {
 	git_repository *repo;
 	git_remote_callbacks callbacks;
 	unsigned int need_pack:1,
-		check_cert;
+		download_tags:2, /* There are four possible values */
+		check_cert:1;
 };
 
 const char* git_remote__urlfordirection(struct git_remote *remote, int direction);

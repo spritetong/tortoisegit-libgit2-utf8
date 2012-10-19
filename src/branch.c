@@ -77,12 +77,11 @@ int git_branch_create(
 	if (git_buf_joinpath(&canonical_branch_name, GIT_REFS_HEADS_DIR, branch_name) < 0)
 		goto cleanup;
 
-	if (git_reference_create_oid(&branch, repository,
-		git_buf_cstr(&canonical_branch_name), git_object_id(commit), force) < 0)
-		goto cleanup;
+	error = git_reference_create_oid(&branch, repository,
+		git_buf_cstr(&canonical_branch_name), git_object_id(commit), force);
 
-	*ref_out = branch;
-	error = 0;
+	if (!error)
+		*ref_out = branch;
 
 cleanup:
 	git_object_free(commit);
@@ -92,7 +91,7 @@ cleanup:
 
 int git_branch_delete(git_reference *branch)
 {
-	git_reference *head = NULL;
+	int is_head;
 
 	assert(branch);
 
@@ -102,27 +101,16 @@ int git_branch_delete(git_reference *branch)
 		return -1;
 	}
 
-	if (git_reference_lookup(&head, git_reference_owner(branch), GIT_HEAD_FILE) < 0) {
-		giterr_set(GITERR_REFERENCE, "Cannot locate HEAD.");
-		goto on_error;
+	if ((is_head = git_branch_is_head(branch)) < 0)
+		return is_head;
+
+	if (is_head) {
+		giterr_set(GITERR_REFERENCE,
+				"Cannot delete branch '%s' as it is the current HEAD of the repository.", git_reference_name(branch));
+		return -1;
 	}
 
-	if ((git_reference_type(head) == GIT_REF_SYMBOLIC)
-		&& (strcmp(git_reference_target(head), git_reference_name(branch)) == 0)) {
-			giterr_set(GITERR_REFERENCE,
-					"Cannot delete branch '%s' as it is the current HEAD of the repository.", git_reference_name(branch));
-			goto on_error;
-	}
-
-	if (git_reference_delete(branch) < 0)
-		goto on_error;
-
-	git_reference_free(head);
-	return 0;
-
-on_error:
-	git_reference_free(head);
-	return -1;
+	return git_reference_delete(branch);
 }
 
 typedef struct {
@@ -248,9 +236,11 @@ int git_branch_tracking(
 			goto cleanup;
 
 		refspec = git_remote_fetchspec(remote);
-		if (refspec == NULL) {
-			error = GIT_ENOTFOUND;
-			goto cleanup;
+		if (refspec == NULL
+			|| refspec->src == NULL
+			|| refspec->dst == NULL) {
+				error = GIT_ENOTFOUND;
+				goto cleanup;
 		}
 
 		if (git_refspec_transform_r(&buf, refspec, merge_name) < 0)
@@ -268,4 +258,27 @@ cleanup:
 	git_remote_free(remote);
 	git_buf_free(&buf);
 	return error;
+}
+
+int git_branch_is_head(
+		git_reference *branch)
+{
+	git_reference *head;
+	bool is_same = false;
+
+	assert(branch);
+
+	if (!git_reference_is_branch(branch))
+		return false;
+
+	if (git_repository_head(&head, git_reference_owner(branch)) < 0)
+		return -1;
+
+	is_same = strcmp(
+		git_reference_name(branch),
+		git_reference_name(head)) == 0;
+
+	git_reference_free(head);
+
+	return is_same;
 }

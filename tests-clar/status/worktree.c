@@ -71,7 +71,7 @@ static int remove_file_cb(void *data, git_buf *file)
 		return 0;
 
 	if (git_path_isdir(filename))
-		cl_git_pass(git_futils_rmdir_r(filename, GIT_DIRREMOVAL_FILES_AND_DIRS));
+		cl_git_pass(git_futils_rmdir_r(filename, NULL, GIT_DIRREMOVAL_FILES_AND_DIRS));
 	else
 		cl_git_pass(p_unlink(git_buf_cstr(file)));
 
@@ -110,7 +110,13 @@ void test_status_worktree__swap_subdir_and_file(void)
 {
 	status_entry_counts counts;
 	git_repository *repo = cl_git_sandbox_init("status");
+	git_index *index;
 	git_status_options opts;
+	bool ignore_case;
+
+	cl_git_pass(git_repository_index(&index, repo));
+	ignore_case = index->ignore_case;
+	git_index_free(index);
 
 	/* first alter the contents of the worktree */
 	cl_git_pass(p_rename("status/current_file", "status/swap"));
@@ -124,8 +130,8 @@ void test_status_worktree__swap_subdir_and_file(void)
 	/* now get status */
 	memset(&counts, 0x0, sizeof(status_entry_counts));
 	counts.expected_entry_count = entry_count3;
-	counts.expected_paths = entry_paths3;
-	counts.expected_statuses = entry_statuses3;
+	counts.expected_paths = ignore_case ? entry_paths3_icase : entry_paths3;
+	counts.expected_statuses = ignore_case ? entry_statuses3_icase : entry_statuses3;
 
 	memset(&opts, 0, sizeof(opts));
 	opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED |
@@ -308,7 +314,7 @@ void test_status_worktree__issue_592_3(void)
 	repo = cl_git_sandbox_init("issue_592");
 
 	cl_git_pass(git_buf_joinpath(&path, git_repository_workdir(repo), "c"));
-	cl_git_pass(git_futils_rmdir_r(git_buf_cstr(&path), GIT_DIRREMOVAL_FILES_AND_DIRS));
+	cl_git_pass(git_futils_rmdir_r(git_buf_cstr(&path), NULL, GIT_DIRREMOVAL_FILES_AND_DIRS));
 
 	cl_git_pass(git_status_foreach(repo, cb_status__check_592, "c/a.txt"));
 
@@ -338,7 +344,7 @@ void test_status_worktree__issue_592_5(void)
 	repo = cl_git_sandbox_init("issue_592");
 
 	cl_git_pass(git_buf_joinpath(&path, git_repository_workdir(repo), "t"));
-	cl_git_pass(git_futils_rmdir_r(git_buf_cstr(&path), GIT_DIRREMOVAL_FILES_AND_DIRS));
+	cl_git_pass(git_futils_rmdir_r(git_buf_cstr(&path), NULL, GIT_DIRREMOVAL_FILES_AND_DIRS));
 	cl_git_pass(p_mkdir(git_buf_cstr(&path), 0777));
 
 	cl_git_pass(git_status_foreach(repo, cb_status__check_592, NULL));
@@ -413,10 +419,7 @@ void test_status_worktree__cannot_retrieve_the_status_of_a_bare_repository(void)
 
 	cl_git_pass(git_repository_open(&repo, cl_fixture("testrepo.git")));
 
-	error = git_status_file(&status, repo, "dummy");
-
-	cl_git_fail(error);
-	cl_assert(error != GIT_ENOTFOUND);
+	cl_assert_equal_i(GIT_EBAREREPO, git_status_file(&status, repo, "dummy"));
 
 	git_repository_free(repo);
 }
@@ -796,4 +799,48 @@ void test_status_worktree__interruptable_foreach(void)
 	);
 
 	cl_assert_equal_i(8, count);
+}
+
+void test_status_worktree__new_staged_file_must_handle_crlf(void)
+{
+	git_repository *repo;
+	git_index *index;
+	git_config *config;
+	unsigned int status;
+
+	cl_git_pass(git_repository_init(&repo, "getting_started", 0));
+
+	// Ensure that repo has core.autocrlf=true
+	cl_git_pass(git_repository_config(&config, repo));
+	cl_git_pass(git_config_set_bool(config, "core.autocrlf", true));
+
+	cl_git_mkfile("getting_started/testfile.txt", "content\r\n");	// Content with CRLF
+
+	cl_git_pass(git_repository_index(&index, repo));
+	cl_git_pass(git_index_add(index, "testfile.txt", 0));
+	cl_git_pass(git_index_write(index));
+
+	cl_git_pass(git_status_file(&status, repo, "testfile.txt"));
+	cl_assert_equal_i(GIT_STATUS_INDEX_NEW, status);
+
+	git_config_free(config);
+	git_index_free(index);
+	git_repository_free(repo);
+}
+
+void test_status_worktree__line_endings_dont_count_as_changes_with_autocrlf(void)
+{
+	git_repository *repo = cl_git_sandbox_init("status");
+	git_config *config;
+	unsigned int status;
+
+	cl_git_pass(git_repository_config(&config, repo));
+	cl_git_pass(git_config_set_bool(config, "core.autocrlf", true));
+	git_config_free(config);
+
+	cl_git_rewritefile("status/current_file", "current_file\r\n");
+
+	cl_git_pass(git_status_file(&status, repo, "current_file"));
+
+	cl_assert_equal_i(GIT_STATUS_CURRENT, status);
 }

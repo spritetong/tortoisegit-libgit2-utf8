@@ -263,8 +263,9 @@ static int crlf_apply_to_workdir(git_filter *self, git_buf *dest, const git_buf 
 	return convert_line_endings(dest, source, workdir_ending);
 }
 
-static int find_and_add_filter(git_vector *filters, git_repository *repo, const char *path,
-										 int (*apply)(struct git_filter *self, git_buf *dest, const git_buf *source))
+static int find_and_add_filter(
+	git_vector *filters, git_repository *repo, const char *path,
+	int (*apply)(struct git_filter *self, git_buf *dest, const git_buf *source))
 {
 	struct crlf_attrs ca;
 	struct crlf_filter *filter;
@@ -276,7 +277,7 @@ static int find_and_add_filter(git_vector *filters, git_repository *repo, const 
 
 	/*
 	 * Use the core Git logic to see if we should perform CRLF for this file
-	 * based on its attributes & the value of `core.auto_crlf`
+	 * based on its attributes & the value of `core.autocrlf`
 	 */
 	ca.crlf_action = crlf_input_action(&ca);
 

@@ -6,6 +6,8 @@ extern git_tree *resolve_commit_oid_to_tree(
 
 typedef struct {
 	int files;
+	int files_binary;
+
 	int file_adds;
 	int file_dels;
 	int file_mods;
@@ -27,21 +29,29 @@ typedef struct {
 
 extern int diff_file_fn(
 	void *cb_data,
-	git_diff_delta *delta,
+	const git_diff_delta *delta,
 	float progress);
 
 extern int diff_hunk_fn(
 	void *cb_data,
-	git_diff_delta *delta,
-	git_diff_range *range,
+	const git_diff_delta *delta,
+	const git_diff_range *range,
 	const char *header,
 	size_t header_len);
 
 extern int diff_line_fn(
 	void *cb_data,
-	git_diff_delta *delta,
-	git_diff_range *range,
+	const git_diff_delta *delta,
+	const git_diff_range *range,
 	char line_origin,
 	const char *content,
 	size_t content_len);
 
+extern int diff_foreach_via_iterator(
+	git_diff_list *diff,
+	void *data,
+	git_diff_file_fn file_cb,
+	git_diff_hunk_fn hunk_cb,
+	git_diff_data_fn line_cb);
+
+extern void diff_print(FILE *fp, git_diff_list *diff);

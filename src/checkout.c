@@ -11,9 +11,9 @@
 #include "git2/repository.h"
 #include "git2/refs.h"
 #include "git2/tree.h"
-#include "git2/commit.h"
 #include "git2/blob.h"
 #include "git2/config.h"
+#include "git2/diff.h"
 
 #include "common.h"
 #include "refs.h"
@@ -22,210 +22,425 @@
 #include "filter.h"
 #include "blob.h"
 
-GIT_BEGIN_DECL
-
-
-typedef struct tree_walk_data
+struct checkout_diff_data
 {
+	git_buf *path;
+	size_t workdir_len;
+	git_checkout_opts *checkout_opts;
 	git_indexer_stats *stats;
-	git_checkout_opts *opts;
-	git_repository *repo;
-	git_odb *odb;
-	bool no_symlinks;
-} tree_walk_data;
+	git_repository *owner;
+	bool can_symlink;
+	bool found_submodules;
+	bool create_submodules;
+	int error;
+};
 
-
-static int blob_contents_to_link(tree_walk_data *data, git_buf *fnbuf,
-											const git_oid *id)
+static int buffer_to_file(
+	git_buf *buffer,
+	const char *path,
+	mode_t dir_mode,
+	int file_open_flags,
+	mode_t file_mode)
 {
-	int retcode = GIT_ERROR;
-	git_blob *blob;
+	int fd, error, error_close;
 
-	/* Get the link target */
-	if (!(retcode = git_blob_lookup(&blob, data->repo, id))) {
-		git_buf linktarget = GIT_BUF_INIT;
-		if (!(retcode = git_blob__getbuf(&linktarget, blob))) {
-			/* Create the link */
-			const char *new = git_buf_cstr(&linktarget),
-						  *old = git_buf_cstr(fnbuf);
-			retcode = data->no_symlinks
-				? git_futils_fake_symlink(new, old)
-				: p_symlink(new, old);
-		}
-		git_buf_free(&linktarget);
-		git_blob_free(blob);
-	}
+	if ((error = git_futils_mkpath2file(path, dir_mode)) < 0)
+		return error;
 
-	return retcode;
+	if ((fd = p_open(path, file_open_flags, file_mode)) < 0)
+		return fd;
+
+	error = p_write(fd, git_buf_cstr(buffer), git_buf_len(buffer));
+
+	error_close = p_close(fd);
+
+	if (!error)
+		error = error_close;
+
+	if (!error &&
+		(file_mode & 0100) != 0 &&
+		(error = p_chmod(path, file_mode)) < 0)
+		giterr_set(GITERR_OS, "Failed to set permissions on '%s'", path);
+
+	return error;
 }
 
-
-static int blob_contents_to_file(git_repository *repo, git_buf *fnbuf,
-											const git_tree_entry *entry, tree_walk_data *data)
+static int blob_content_to_file(
+	git_blob *blob,
+	const char *path,
+	mode_t entry_filemode,
+	git_checkout_opts *opts)
 {
-	int retcode = GIT_ERROR;
-	int fd = -1;
-	git_buf contents = GIT_BUF_INIT;
-	const git_oid *id = git_tree_entry_id(entry);
-	int file_mode = data->opts->file_mode;
+	int error = -1, nb_filters = 0;
+	mode_t file_mode = opts->file_mode;
+	bool dont_free_filtered = false;
+	git_buf unfiltered = GIT_BUF_INIT, filtered = GIT_BUF_INIT;
+	git_vector filters = GIT_VECTOR_INIT;
 
-	/* Deal with pre-existing files */
-	if (git_path_exists(git_buf_cstr(fnbuf)) &&
-		 data->opts->existing_file_action == GIT_CHECKOUT_SKIP_EXISTING)
-		return 0;
+	if (opts->disable_filters ||
+		(nb_filters = git_filters_load(
+			&filters,
+			git_object_owner((git_object *)blob),
+			path,
+			GIT_FILTER_TO_WORKTREE)) == 0) {
 
-	/* Allow disabling of filters */
-	if (data->opts->disable_filters) {
-		git_blob *blob;
-		if (!(retcode = git_blob_lookup(&blob, repo, id))) {
-			retcode = git_blob__getbuf(&contents, blob);
-			git_blob_free(blob);
-		}
-	} else {
-		retcode = git_filter_blob_contents(&contents, repo, id, git_buf_cstr(fnbuf));
+		/* Create a fake git_buf from the blob raw data... */
+		filtered.ptr = blob->odb_object->raw.data;
+		filtered.size = blob->odb_object->raw.len;
+
+		/* ... and make sure it doesn't get unexpectedly freed */
+		dont_free_filtered = true;
 	}
-	if (retcode < 0) goto bctf_cleanup;
+
+	if (nb_filters < 0)
+		return nb_filters;
+
+	if (nb_filters > 0)	 {
+		if ((error = git_blob__getbuf(&unfiltered, blob)) < 0)
+			goto cleanup;
+
+		if ((error = git_filters_apply(&filtered, &unfiltered, &filters)) < 0)
+			goto cleanup;
+	}
 
 	/* Allow overriding of file mode */
 	if (!file_mode)
-		file_mode = git_tree_entry_filemode(entry);
+		file_mode = entry_filemode;
 
-	if ((retcode = git_futils_mkpath2file(git_buf_cstr(fnbuf), data->opts->dir_mode)) < 0)
-		goto bctf_cleanup;
+	error = buffer_to_file(&filtered, path, opts->dir_mode, opts->file_open_flags, file_mode);
 
-	fd = p_open(git_buf_cstr(fnbuf), data->opts->file_open_flags, file_mode);
-	if (fd < 0) goto bctf_cleanup;
+cleanup:
+	git_filters_free(&filters);
+	git_buf_free(&unfiltered);
+	if (!dont_free_filtered)
+		git_buf_free(&filtered);
 
-	if (!p_write(fd, git_buf_cstr(&contents), git_buf_len(&contents)))
-		retcode = 0;
-	else
-		retcode = GIT_ERROR;
-	p_close(fd);
-
-bctf_cleanup:
-	git_buf_free(&contents);
-	return retcode;
+	return error;
 }
 
-static int checkout_walker(const char *path, const git_tree_entry *entry, void *payload)
+static int blob_content_to_link(git_blob *blob, const char *path, bool can_symlink)
 {
-	int retcode = 0;
-	tree_walk_data *data = (tree_walk_data*)payload;
-	int attr = git_tree_entry_filemode(entry);
-	git_buf fnbuf = GIT_BUF_INIT;
-	git_buf_join_n(&fnbuf, '/', 3,
-						git_repository_workdir(data->repo),
-						path,
-						git_tree_entry_name(entry));
+	git_buf linktarget = GIT_BUF_INIT;
+	int error;
 
-	switch(git_tree_entry_type(entry))
+	if ((error = git_blob__getbuf(&linktarget, blob)) < 0)
+		return error;
+
+	if (can_symlink)
+		error = p_symlink(git_buf_cstr(&linktarget), path);
+	else
+		error = git_futils_fake_symlink(git_buf_cstr(&linktarget), path);
+
+	git_buf_free(&linktarget);
+
+	return error;
+}
+
+static int checkout_submodule(
+	struct checkout_diff_data *data,
+	const git_diff_file *file)
+{
+	if (git_futils_mkdir(
+			file->path, git_repository_workdir(data->owner),
+			data->checkout_opts->dir_mode, GIT_MKDIR_PATH) < 0)
+		return -1;
+
+	/* TODO: two cases:
+	 * 1 - submodule already checked out, but we need to move the HEAD
+	 *     to the new OID, or
+	 * 2 - submodule not checked out and we should recursively check it out
+	 *
+	 * Checkout will not execute a pull request on the submodule, but a
+	 * clone command should probably be able to.  Do we need a submodule
+	 * callback option?
+	 */
+
+	return 0;
+}
+
+static int checkout_blob(
+	struct checkout_diff_data *data,
+	const git_diff_file *file)
+{
+	git_blob *blob;
+	int error;
+
+	git_buf_truncate(data->path, data->workdir_len);
+	if (git_buf_joinpath(data->path, git_buf_cstr(data->path), file->path) < 0)
+		return -1;
+
+	if ((error = git_blob_lookup(&blob, data->owner, &file->oid)) < 0)
+		return error;
+
+	if (S_ISLNK(file->mode))
+		error = blob_content_to_link(
+			blob, git_buf_cstr(data->path), data->can_symlink);
+	else
+		error = blob_content_to_file(
+			blob, git_buf_cstr(data->path), file->mode, data->checkout_opts);
+
+	git_blob_free(blob);
+
+	return error;
+}
+
+static int checkout_remove_the_old(
+	void *cb_data, const git_diff_delta *delta, float progress)
+{
+	struct checkout_diff_data *data = cb_data;
+	git_checkout_opts *opts = data->checkout_opts;
+
+	GIT_UNUSED(progress);
+	data->stats->processed++;
+
+	if ((delta->status == GIT_DELTA_UNTRACKED &&
+		 (opts->checkout_strategy & GIT_CHECKOUT_REMOVE_UNTRACKED) != 0) ||
+		(delta->status == GIT_DELTA_TYPECHANGE &&
+		 (opts->checkout_strategy & GIT_CHECKOUT_OVERWRITE_MODIFIED) != 0))
 	{
-	case GIT_OBJ_TREE:
-		/* Nothing to do; the blob handling creates necessary directories. */
-		break;
-
-	case GIT_OBJ_COMMIT:
-		/* Submodule */
-		git_futils_mkpath2file(git_buf_cstr(&fnbuf), data->opts->dir_mode);
-		retcode = p_mkdir(git_buf_cstr(&fnbuf), data->opts->dir_mode);
-		break;
-
-	case GIT_OBJ_BLOB:
-		if (S_ISLNK(attr)) {
-			retcode = blob_contents_to_link(data, &fnbuf,
-													  git_tree_entry_id(entry));
-		} else {
-			retcode = blob_contents_to_file(data->repo, &fnbuf, entry, data);
-		}
-		break;
-
-	default:
-		retcode = -1;
-		break;
+		data->error = git_futils_rmdir_r(
+			delta->new_file.path,
+			git_repository_workdir(data->owner),
+			GIT_DIRREMOVAL_FILES_AND_DIRS);
 	}
 
-	git_buf_free(&fnbuf);
-	data->stats->processed++;
-	return retcode;
+	return data->error;
 }
 
-
-int git_checkout_head(git_repository *repo, git_checkout_opts *opts, git_indexer_stats *stats)
+static int checkout_create_the_new(
+	void *cb_data, const git_diff_delta *delta, float progress)
 {
-	int retcode = GIT_ERROR;
-	git_indexer_stats dummy_stats;
-	git_checkout_opts default_opts = {0};
-	git_tree *tree;
-	tree_walk_data payload;
-	git_config *cfg;
+	int error = 0;
+	struct checkout_diff_data *data = cb_data;
+	git_checkout_opts *opts = data->checkout_opts;
+	bool do_checkout = false, do_notify = false;
 
-	assert(repo);
-	if (!opts) opts = &default_opts;
-	if (!stats) stats = &dummy_stats;
+	GIT_UNUSED(progress);
+	data->stats->processed++;
+
+	if (delta->status == GIT_DELTA_MODIFIED ||
+		delta->status == GIT_DELTA_TYPECHANGE)
+	{
+		if ((opts->checkout_strategy & GIT_CHECKOUT_OVERWRITE_MODIFIED) != 0)
+			do_checkout = true;
+		else if (opts->skipped_notify_cb != NULL)
+			do_notify = !data->create_submodules;
+	}
+	else if (delta->status == GIT_DELTA_DELETED &&
+			 (opts->checkout_strategy & GIT_CHECKOUT_CREATE_MISSING) != 0)
+		do_checkout = true;
+
+	if (do_notify) {
+		if (opts->skipped_notify_cb(
+			delta->old_file.path, &delta->old_file.oid,
+			delta->old_file.mode, opts->notify_payload))
+		{
+			giterr_clear();
+			error = GIT_EUSER;
+		}
+	}
+
+	if (do_checkout) {
+		bool is_submodule = S_ISGITLINK(delta->old_file.mode);
+
+		if (is_submodule)
+			data->found_submodules = true;
+
+		if (!is_submodule && !data->create_submodules)
+			error = checkout_blob(data, &delta->old_file);
+
+		else if (is_submodule && data->create_submodules)
+			error = checkout_submodule(data, &delta->old_file);
+	}
+
+	if (error)
+		data->error = error;
+
+	return error;
+}
+
+static int retrieve_symlink_capabilities(git_repository *repo, bool *can_symlink)
+{
+	git_config *cfg;
+	int error;
+
+	if (git_repository_config__weakptr(&cfg, repo) < 0)
+		return -1;
+
+	error = git_config_get_bool((int *)can_symlink, cfg, "core.symlinks");
+
+	/*
+	 * When no "core.symlinks" entry is found in any of the configuration
+	 * store (local, global or system), default value is "true".
+	 */
+	if (error == GIT_ENOTFOUND) {
+		*can_symlink = true;
+		error = 0;
+	}
+
+	return error;
+}
+
+static void normalize_options(git_checkout_opts *normalized, git_checkout_opts *proposed)
+{
+	assert(normalized);
+
+	if (!proposed)
+		memset(normalized, 0, sizeof(git_checkout_opts));
+	else
+		memmove(normalized, proposed, sizeof(git_checkout_opts));
 
 	/* Default options */
-	if (!opts->existing_file_action)
-		opts->existing_file_action = GIT_CHECKOUT_OVERWRITE_EXISTING;
-	/* opts->disable_filters is false by default */
-	if (!opts->dir_mode) opts->dir_mode = GIT_DIR_MODE;
-	if (!opts->file_open_flags)
-		opts->file_open_flags = O_CREAT | O_TRUNC | O_WRONLY;
+	if (!normalized->checkout_strategy)
+		normalized->checkout_strategy = GIT_CHECKOUT_DEFAULT;
 
-	if (git_repository_is_bare(repo)) {
-		giterr_set(GITERR_INVALID, "Checkout is not allowed for bare repositories");
+	/* opts->disable_filters is false by default */
+	if (!normalized->dir_mode)
+		normalized->dir_mode = GIT_DIR_MODE;
+
+	if (!normalized->file_open_flags)
+		normalized->file_open_flags = O_CREAT | O_TRUNC | O_WRONLY;
+}
+
+int git_checkout_index(
+	git_repository *repo,
+	git_checkout_opts *opts,
+	git_indexer_stats *stats)
+{
+	git_diff_list *diff = NULL;
+	git_indexer_stats dummy_stats;
+
+	git_diff_options diff_opts = {0};
+	git_checkout_opts checkout_opts;
+
+	struct checkout_diff_data data;
+	git_buf workdir = GIT_BUF_INIT;
+
+	int error;
+
+	assert(repo);
+
+	if ((error = git_repository__ensure_not_bare(repo, "checkout")) < 0)
+		return error;
+
+	diff_opts.flags =
+		GIT_DIFF_INCLUDE_UNTRACKED |
+		GIT_DIFF_INCLUDE_TYPECHANGE |
+		GIT_DIFF_SKIP_BINARY_CHECK;
+
+	if (opts && opts->paths.count > 0)
+		diff_opts.pathspec = opts->paths;
+
+	if ((error = git_diff_workdir_to_index(repo, &diff_opts, &diff)) < 0)
+		goto cleanup;
+
+	if ((error = git_buf_puts(&workdir, git_repository_workdir(repo))) < 0)
+		goto cleanup;
+
+	normalize_options(&checkout_opts, opts);
+
+	if (!stats)
+		stats = &dummy_stats;
+
+	stats->processed = 0;
+	/* total based on 3 passes, but it might be 2 if no submodules */
+	stats->total = (unsigned int)git_diff_num_deltas(diff) * 3;
+
+	memset(&data, 0, sizeof(data));
+
+	data.path = &workdir;
+	data.workdir_len = git_buf_len(&workdir);
+	data.checkout_opts = &checkout_opts;
+	data.stats = stats;
+	data.owner = repo;
+
+	if ((error = retrieve_symlink_capabilities(repo, &data.can_symlink)) < 0)
+		goto cleanup;
+
+	/* Checkout is best performed with three passes through the diff.
+	 *
+	 * 1. First do removes, because we iterate in alphabetical order, thus
+	 *    a new untracked directory will end up sorted *after* a blob that
+	 *    should be checked out with the same name.
+	 * 2. Then checkout all blobs.
+	 * 3. Then checkout all submodules in case a new .gitmodules blob was
+	 *    checked out during pass #2.
+	 */
+
+	if (!(error = git_diff_foreach(
+			diff, &data, checkout_remove_the_old, NULL, NULL)) &&
+		!(error = git_diff_foreach(
+			diff, &data, checkout_create_the_new, NULL, NULL)) &&
+		data.found_submodules)
+	{
+		data.create_submodules = true;
+		error = git_diff_foreach(
+			diff, &data, checkout_create_the_new, NULL, NULL);
+	}
+
+	stats->processed = stats->total;
+
+cleanup:
+	if (error == GIT_EUSER)
+		error = (data.error != 0) ? data.error : -1;
+
+	git_diff_list_free(diff);
+	git_buf_free(&workdir);
+
+	return error;
+}
+
+int git_checkout_tree(
+	git_repository *repo,
+	git_object *treeish,
+	git_checkout_opts *opts,
+	git_indexer_stats *stats)
+{
+	git_index *index = NULL;
+	git_tree *tree = NULL;
+
+	int error;
+
+	assert(repo && treeish);
+
+	if (git_object_peel((git_object **)&tree, treeish, GIT_OBJ_TREE) < 0) {
+		giterr_set(GITERR_INVALID, "Provided treeish cannot be peeled into a tree.");
 		return GIT_ERROR;
 	}
 
-	memset(&payload, 0, sizeof(payload));
+	if ((error = git_repository_index(&index, repo)) < 0)
+		goto cleanup;
 
-	/* Determine if symlinks should be handled */
-	if (!git_repository_config__weakptr(&cfg, repo)) {
-		int temp = true;
-		if (!git_config_get_bool(&temp, cfg, "core.symlinks")) {
-			payload.no_symlinks = !temp;
-		}
-	}
+	if ((error = git_index_read_tree(index, tree, NULL)) < 0)
+		goto cleanup;
 
-	stats->total = stats->processed = 0;
-	payload.stats = stats;
-	payload.opts = opts;
-	payload.repo = repo;
-	if (git_repository_odb(&payload.odb, repo) < 0) return GIT_ERROR;
+	if ((error = git_index_write(index)) < 0)
+		goto cleanup;
 
-	if (!git_repository_head_tree(&tree, repo)) {
-		git_index *idx;
-		if (!(retcode = git_repository_index(&idx, repo))) {
-			if (!(retcode = git_index_read_tree(idx, tree, stats))) {
-				git_index_write(idx);
-				retcode = git_tree_walk(tree, checkout_walker, GIT_TREEWALK_POST, &payload);
-			}
-			git_index_free(idx);
-		}
-		git_tree_free(tree);
-	}
+	error = git_checkout_index(repo, opts, stats);
 
-	git_odb_free(payload.odb);
-	return retcode;
+cleanup:
+	git_index_free(index);
+	git_tree_free(tree);
+	return error;
 }
 
-
-int git_checkout_reference(git_reference *ref,
-									git_checkout_opts *opts,
-									git_indexer_stats *stats)
+int git_checkout_head(
+	git_repository *repo,
+	git_checkout_opts *opts,
+	git_indexer_stats *stats)
 {
-	git_repository *repo= git_reference_owner(ref);
-	git_reference *head = NULL;
-	int retcode = GIT_ERROR;
+	int error;
+	git_tree *tree = NULL;
 
-	if ((retcode = git_reference_create_symbolic(&head, repo, GIT_HEAD_FILE,
-																git_reference_name(ref), true)) < 0)
-		return retcode;
+	assert(repo);
 
-	retcode = git_checkout_head(git_reference_owner(ref), opts, stats);
+	if (git_repository_head_tree(&tree, repo) < 0)
+		return -1;
 
-	git_reference_free(head);
-	return retcode;
+	error = git_checkout_tree(repo, (git_object *)tree, opts, stats);
+
+	git_tree_free(tree);
+
+	return error;
 }
-
-
-GIT_END_DECL

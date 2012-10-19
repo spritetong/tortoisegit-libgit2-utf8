@@ -18,6 +18,7 @@
 #include "refs.h"
 #include "buffer.h"
 #include "odb.h"
+#include "object.h"
 #include "attr.h"
 #include "strmap.h"
 
@@ -75,13 +76,6 @@ enum {
 	GIT_REPOSITORY_INIT__IS_REINIT  = (1u << 18),
 };
 
-/** Base git object for inheritance */
-struct git_object {
-	git_cached_obj cached;
-	git_repository *repo;
-	git_otype type;
-};
-
 /** Internal structure for repository object */
 struct git_repository {
 	git_odb *_odb;
@@ -102,21 +96,6 @@ struct git_repository {
 	git_cvar_value cvar_cache[GIT_CVAR_CACHE_MAX];
 };
 
-/* fully free the object; internal method, DO NOT EXPORT */
-void git_object__free(void *object);
-
-GIT_INLINE(int) git_object__dup(git_object **dest, git_object *source)
-{
-	git_cached_obj_incref(source);
-	*dest = source;
-	return 0;
-}
-
-int git_object__resolve_to_type(git_object **obj, git_otype type);
-
-int git_oid__parse(git_oid *oid, const char **buffer_out, const char *buffer_end, const char *header);
-void git_oid__writebuf(git_buf *buf, const char *header, const git_oid *oid);
-
 GIT_INLINE(git_attr_cache *) git_repository_attr_cache(git_repository *repo)
 {
 	return &repo->attrcache;
@@ -136,7 +115,7 @@ int git_repository_odb__weakptr(git_odb **out, git_repository *repo);
 int git_repository_index__weakptr(git_index **out, git_repository *repo);
 
 /*
- * CVAR cache 
+ * CVAR cache
  *
  * Efficient access to the most used config variables of a repository.
  * The cache is cleared everytime the config backend is replaced.
@@ -148,5 +127,20 @@ void git_repository__cvar_cache_clear(git_repository *repo);
  * Submodule cache
  */
 extern void git_submodule_config_free(git_repository *repo);
+
+GIT_INLINE(int) git_repository__ensure_not_bare(
+	git_repository *repo,
+	const char *operation_name)
+{
+	if (!git_repository_is_bare(repo))
+		return 0;
+
+	giterr_set(
+		GITERR_REPOSITORY,
+		"Cannot %s. This operation is not allowed against bare repositories.",
+		operation_name);
+
+	return GIT_EBAREREPO;
+}
 
 #endif

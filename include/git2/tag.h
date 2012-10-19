@@ -11,6 +11,7 @@
 #include "types.h"
 #include "oid.h"
 #include "object.h"
+#include "strarray.h"
 
 /**
  * @file git2/tag.h
@@ -276,6 +277,21 @@ GIT_EXTERN(int) git_tag_list_match(
 		git_strarray *tag_names,
 		const char *pattern,
 		git_repository *repo);
+
+
+typedef int (*git_tag_foreach_cb)(const char *name, git_oid *oid, void *data);
+/**
+ * Call callback `cb' for each tag in the repository
+ *
+ * @param repo Repository
+ * @param cb Callback function
+ * @param cb_data Pointer to callback data (optional)
+ */
+GIT_EXTERN(int) git_tag_foreach(
+		git_repository *repo,
+		git_tag_foreach_cb cb,
+		void *cb_data);
+
 
 /**
  * Recursively peel a tag until a non tag git_object

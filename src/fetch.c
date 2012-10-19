@@ -21,7 +21,7 @@
 
 struct filter_payload {
 	git_remote *remote;
-	const git_refspec *spec;
+	const git_refspec *spec, *tagspec;
 	git_odb *odb;
 	int found_head;
 };
@@ -29,18 +29,21 @@ struct filter_payload {
 static int filter_ref__cb(git_remote_head *head, void *payload)
 {
 	struct filter_payload *p = payload;
+	int match = 0;
 
-	if (!p->found_head && strcmp(head->name, GIT_HEAD_FILE) == 0) {
+	if (!git_reference_is_valid_name(head->name))
+		return 0;
+
+	if (!p->found_head && strcmp(head->name, GIT_HEAD_FILE) == 0)
 		p->found_head = 1;
-	} else {
-		/* If it doesn't match the refpec, we don't want it */
-		if (!git_refspec_src_matches(p->spec, head->name))
-			return 0;
+	else if (git_refspec_src_matches(p->spec, head->name))
+			match = 1;
+	else if (p->remote->download_tags == GIT_REMOTE_DOWNLOAD_TAGS_ALL &&
+		 git_refspec_src_matches(p->tagspec, head->name))
+			match = 1;
 
-		/* Don't even try to ask for the annotation target */
-		if (!git__suffixcmp(head->name, "^{}"))
-			return 0;
-	}
+	if (!match)
+		return 0;
 
 	/* If we have the object, mark it so we don't ask for it */
 	if (git_odb_exists(p->odb, &head->oid))
@@ -54,8 +57,12 @@ static int filter_ref__cb(git_remote_head *head, void *payload)
 static int filter_wants(git_remote *remote)
 {
 	struct filter_payload p;
+	git_refspec tagspec;
+	int error = -1;
 
 	git_vector_clear(&remote->refs);
+	if (git_refspec__parse(&tagspec, GIT_REFSPEC_TAGS, true) < 0)
+		return error;
 
 	/*
 	 * The fetch refspec can be NULL, and what this means is that the
@@ -64,13 +71,19 @@ static int filter_wants(git_remote *remote)
 	 * HEAD, which will be stored in FETCH_HEAD after the fetch.
 	 */
 	p.spec = git_remote_fetchspec(remote);
+	p.tagspec = &tagspec;
 	p.found_head = 0;
 	p.remote = remote;
 
 	if (git_repository_odb__weakptr(&p.odb, remote->repo) < 0)
-		return -1;
+		goto cleanup;
 
-	return git_remote_ls(remote, filter_ref__cb, &p);
+	error = git_remote_ls(remote, filter_ref__cb, &p);
+
+cleanup:
+	git_refspec__free(&tagspec);
+
+	return error;
 }
 
 /* Wait until we get an ack from the */
@@ -139,7 +152,7 @@ int git_fetch_negotiate(git_remote *remote)
 	gitno_buffer *buf = &t->buffer;
 	git_buf data = GIT_BUF_INIT;
 	git_revwalk *walk = NULL;
-	int error, pkt_type;
+	int error = -1, pkt_type;
 	unsigned int i;
 	git_oid oid;
 
@@ -177,6 +190,12 @@ int git_fetch_negotiate(git_remote *remote)
 		git_pkt_buffer_have(&oid, &data);
 		i++;
 		if (i % 20 == 0) {
+			if (t->cancel.val) {
+				giterr_set(GITERR_NET, "The fetch was cancelled by the user");
+					error = GIT_EUSER;
+					goto on_error;
+			}
+
 			git_pkt_buffer_flush(&data);
 			if (git_buf_oom(&data))
 				goto on_error;
@@ -221,7 +240,7 @@ int git_fetch_negotiate(git_remote *remote)
 		}
 	}
 
-	if (error < 0 && error != GIT_REVWALKOVER)
+	if (error < 0 && error != GIT_ITEROVER)
 		goto on_error;
 
 	/* Tell the other end that we're done negotiating */
@@ -241,6 +260,11 @@ int git_fetch_negotiate(git_remote *remote)
 	}
 
 	git_pkt_buffer_done(&data);
+	if (t->cancel.val) {
+		giterr_set(GITERR_NET, "The fetch was cancelled by the user");
+		error = GIT_EUSER;
+		goto on_error;
+	}
 	if (t->negotiation_step(t, data.ptr, data.size) < 0)
 		goto on_error;
 
@@ -275,7 +299,7 @@ int git_fetch_negotiate(git_remote *remote)
 on_error:
 	git_revwalk_free(walk);
 	git_buf_free(&data);
-	return -1;
+	return error;
 }
 
 int git_fetch_download_pack(git_remote *remote, git_off_t *bytes, git_indexer_stats *stats)
@@ -292,11 +316,16 @@ int git_fetch_download_pack(git_remote *remote, git_off_t *bytes, git_indexer_st
 
 }
 
-static int no_sideband(git_indexer_stream *idx, gitno_buffer *buf, git_off_t *bytes, git_indexer_stats *stats)
+static int no_sideband(git_transport *t, git_indexer_stream *idx, gitno_buffer *buf, git_off_t *bytes, git_indexer_stats *stats)
 {
 	int recvd;
 
 	do {
+		if (t->cancel.val) {
+			giterr_set(GITERR_NET, "The fetch was cancelled by the user");
+			return GIT_EUSER;
+		}
+
 		if (git_indexer_stream_add(idx, buf->data, buf->offset, stats) < 0)
 			return -1;
 
@@ -324,6 +353,7 @@ int git_fetch__download_pack(
 	git_buf path = GIT_BUF_INIT;
 	gitno_buffer *buf = &t->buffer;
 	git_indexer_stream *idx = NULL;
+	int error = -1;
 
 	if (git_buf_joinpath(&path, git_repository_path(repo), "objects/pack") < 0)
 		return -1;
@@ -341,7 +371,7 @@ int git_fetch__download_pack(
 	 * check which one belongs there.
 	 */
 	if (!t->caps.side_band && !t->caps.side_band_64k) {
-		if (no_sideband(idx, buf, bytes, stats) < 0)
+		if (no_sideband(t, idx, buf, bytes, stats) < 0)
 			goto on_error;
 
 		git_indexer_stream_free(idx);
@@ -350,6 +380,13 @@ int git_fetch__download_pack(
 
 	do {
 		git_pkt *pkt;
+
+		if (t->cancel.val) {
+			giterr_set(GITERR_NET, "The fetch was cancelled by the user");
+			error = GIT_EUSER;
+			goto on_error;
+		}
+
 		if (recv_pkt(&pkt, buf) < 0)
 			goto on_error;
 
@@ -382,7 +419,7 @@ int git_fetch__download_pack(
 on_error:
 	git_buf_free(&path);
 	git_indexer_stream_free(idx);
-	return -1;
+	return error;
 }
 
 int git_fetch_setup_walk(git_revwalk **out, git_repository *repo)

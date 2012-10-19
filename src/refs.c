@@ -15,6 +15,7 @@
 #include <git2/tag.h>
 #include <git2/object.h>
 #include <git2/oid.h>
+#include <git2/branch.h>
 
 GIT__USE_STRMAP;
 
@@ -154,11 +155,26 @@ static int loose_parse_symbolic(git_reference *ref, git_buf *file_content)
 
 static int loose_parse_oid(git_oid *oid, git_buf *file_content)
 {
-	/* File format: 40 chars (OID) */
-	if (git_buf_len(file_content) == GIT_OID_HEXSZ &&
-		git_oid_fromstr(oid, git_buf_cstr(file_content)) == 0)
+	size_t len;
+	const char *str;
+
+	len = git_buf_len(file_content);
+	if (len < GIT_OID_HEXSZ)
+		goto corrupted;
+
+	/* str is guranteed to be zero-terminated */
+	str = git_buf_cstr(file_content);
+
+	/* If the file is longer than 40 chars, the 41st must be a space */
+	if (git_oid_fromstr(oid, git_buf_cstr(file_content)) < 0)
+		goto corrupted;
+
+	/* If the file is longer than 40 chars, the 41st must be a space */
+	str += GIT_OID_HEXSZ;
+	if (*str == '\0' || git__isspace(*str))
 		return 0;
 
+corrupted:
 	giterr_set(GITERR_REFERENCE, "Corrupted loose reference file");
 	return -1;
 }
@@ -195,8 +211,6 @@ static int loose_lookup(git_reference *ref)
 	if (!updated)
 		return 0;
 
-	git_buf_rtrim(&ref_file);
-
 	if (ref->flags & GIT_REF_SYMBOLIC) {
 		git__free(ref->target.symbolic);
 		ref->target.symbolic = NULL;
@@ -206,6 +220,7 @@ static int loose_lookup(git_reference *ref)
 
 	if (git__prefixcmp((const char *)(ref_file.ptr), GIT_SYMREF) == 0) {
 		ref->flags |= GIT_REF_SYMBOLIC;
+		git_buf_rtrim(&ref_file);
 		result = loose_parse_symbolic(ref, &ref_file);
 	} else {
 		ref->flags |= GIT_REF_OID;
@@ -261,14 +276,15 @@ static int loose_write(git_reference *ref)
 	if (git_buf_joinpath(&ref_path, ref->owner->path_repository, ref->name) < 0)
 		return -1;
 
-	/* Remove a possibly existing empty directory hierarchy 
+	/* Remove a possibly existing empty directory hierarchy
 	 * which name would collide with the reference name
 	 */
-	if (git_path_isdir(git_buf_cstr(&ref_path)) && 
-		(git_futils_rmdir_r(git_buf_cstr(&ref_path), GIT_DIRREMOVAL_ONLY_EMPTY_DIRS) < 0)) {
-			git_buf_free(&ref_path);
-			return -1;
-		}
+	if (git_path_isdir(git_buf_cstr(&ref_path)) &&
+		git_futils_rmdir_r(git_buf_cstr(&ref_path), NULL,
+			GIT_DIRREMOVAL_ONLY_EMPTY_DIRS) < 0) {
+		git_buf_free(&ref_path);
+		return -1;
+	}
 
 	if (git_filebuf_open(&file, ref_path.ptr, GIT_FILEBUF_FORCE) < 0) {
 		git_buf_free(&ref_path);
@@ -493,6 +509,10 @@ static int _dirent_loose_listall(void *_data, git_buf *full_path)
 		if ((data->list_flags & loose_guess_rtype(full_path)) == 0)
 			return 0; /* we are filtering out this reference */
 	}
+
+	/* Locked references aren't returned */
+	if (!git__suffixcmp(file_path, GIT_FILELOCK_EXTENSION))
+		return 0;
 
 	if (data->callback(file_path, data->callback_payload))
 		data->callback_error = GIT_EUSER;
@@ -1094,7 +1114,7 @@ int git_reference_lookup_resolved(
 	scan->name = git__calloc(GIT_REFNAME_MAX + 1, sizeof(char));
 	GITERR_CHECK_ALLOC(scan->name);
 
-	if ((result = git_reference__normalize_name(
+	if ((result = git_reference__normalize_name_lax(
 		scan->name,
 		GIT_REFNAME_MAX,
 		name)) < 0) {
@@ -1195,15 +1215,16 @@ int git_reference_create_symbolic(
 {
 	char normalized[GIT_REFNAME_MAX];
 	git_reference *ref = NULL;
+	int error;
 
-	if (git_reference__normalize_name(
+	if (git_reference__normalize_name_lax(
 		normalized,
 		sizeof(normalized),
 		name) < 0)
 			return -1;
 
-	if (reference_can_write(repo, normalized, NULL, force) < 0)
-		return -1;
+	if ((error = reference_can_write(repo, normalized, NULL, force)) < 0)
+		return error;
 
 	if (reference_alloc(&ref, repo, normalized) < 0)
 		return -1;
@@ -1232,17 +1253,18 @@ int git_reference_create_oid(
 	const git_oid *id,
 	int force)
 {
+	int error;
 	git_reference *ref = NULL;
 	char normalized[GIT_REFNAME_MAX];
 
-	if (git_reference__normalize_name_oid(
+	if (git_reference__normalize_name_lax(
 		normalized,
 		sizeof(normalized),
 		name) < 0)
 			return -1;
 
-	if (reference_can_write(repo, normalized, NULL, force) < 0)
-		return -1;
+	if ((error = reference_can_write(repo, normalized, NULL, force)) < 0)
+		return error;
 
 	if (reference_alloc(&ref, repo, name) < 0)
 		return -1;
@@ -1318,7 +1340,7 @@ int git_reference_set_target(git_reference *ref, const char *target)
 		return -1;
 	}
 
-	if (git_reference__normalize_name(
+	if (git_reference__normalize_name_lax(
 		normalized,
 		sizeof(normalized),
 		target))
@@ -1337,9 +1359,7 @@ int git_reference_rename(git_reference *ref, const char *new_name, int force)
 	unsigned int normalization_flags;
 	git_buf aux_path = GIT_BUF_INIT;
 	char normalized[GIT_REFNAME_MAX];
-
-	const char *head_target = NULL;
-	git_reference *head = NULL;
+	bool should_head_be_updated = false;
 
 	normalization_flags = ref->flags & GIT_REF_SYMBOLIC ?
 		GIT_REF_FORMAT_ALLOW_ONELEVEL
@@ -1352,13 +1372,19 @@ int git_reference_rename(git_reference *ref, const char *new_name, int force)
 		normalization_flags) < 0)
 			return -1;
 
-	if (reference_can_write(ref->owner, normalized, ref->name, force) < 0)
-		return -1;
+	if ((result = reference_can_write(ref->owner, normalized, ref->name, force)) < 0)
+		return result;
 
 	/* Initialize path now so we won't get an allocation failure once
 	 * we actually start removing things. */
 	if (git_buf_joinpath(&aux_path, ref->owner->path_repository, new_name) < 0)
 		return -1;
+
+	/*
+	 * Check if we have to update HEAD.
+	 */
+	if ((should_head_be_updated = git_branch_is_head(ref)) < 0)
+		goto cleanup;
 
 	/*
 	 * Now delete the old ref and remove an possibly existing directory
@@ -1384,25 +1410,13 @@ int git_reference_rename(git_reference *ref, const char *new_name, int force)
 		goto rollback;
 
 	/*
-	 * Check if we have to update HEAD.
+	 * Update HEAD it was poiting to the reference being renamed.
 	 */
-	if (git_reference_lookup(&head, ref->owner, GIT_HEAD_FILE) < 0) {
-		giterr_set(GITERR_REFERENCE,
-			"Failed to update HEAD after renaming reference");
-		goto cleanup;
-	}
-
-	head_target = git_reference_target(head);
-
-	if (head_target && !strcmp(head_target, ref->name)) {
-		git_reference_free(head);
-		head = NULL;
-
-		if (git_reference_create_symbolic(&head, ref->owner, "HEAD", new_name, 1) < 0) {
+	if (should_head_be_updated && 
+		git_repository_set_head(ref->owner, new_name) < 0) {
 			giterr_set(GITERR_REFERENCE,
 				"Failed to update HEAD after renaming reference");
 			goto cleanup;
-		}
 	}
 
 	/*
@@ -1420,12 +1434,10 @@ int git_reference_rename(git_reference *ref, const char *new_name, int force)
 	/* The reference is no longer packed */
 	ref->flags &= ~GIT_REF_PACKED;
 
-	git_reference_free(head);
 	git_buf_free(&aux_path);
 	return 0;
 
 cleanup:
-	git_reference_free(head);
 	git_buf_free(&aux_path);
 	return -1;
 
@@ -1580,107 +1592,175 @@ static int is_valid_ref_char(char ch)
 	}
 }
 
+static int ensure_segment_validity(const char *name)
+{
+	const char *current = name;
+	char prev = '\0';
+
+	if (*current == '.')
+		return -1; /* Refname starts with "." */
+
+	for (current = name; ; current++) {
+		if (*current == '\0' || *current == '/')
+			break;
+
+		if (!is_valid_ref_char(*current))
+			return -1; /* Illegal character in refname */
+
+		if (prev == '.' && *current == '.')
+			return -1; /* Refname contains ".." */
+
+		if (prev == '@' && *current == '{')
+			return -1; /* Refname contains "@{" */
+
+		prev = *current;
+	}
+
+	return (int)(current - name);
+}
+
+static bool is_all_caps_and_underscore(const char *name, size_t len)
+{
+	size_t i;
+	char c;
+
+	assert(name && len > 0);
+
+	for (i = 0; i < len; i++)
+	{
+		c = name[i];
+		if ((c < 'A' || c > 'Z') && c != '_')
+			return false;
+	}
+
+	if (*name == '_' || name[len - 1] == '_')
+		return false;
+
+	return true;
+}
+
+int git_reference__normalize_name(
+	git_buf *buf,
+	const char *name,
+	unsigned int flags)
+{
+	// Inspired from https://github.com/git/git/blob/f06d47e7e0d9db709ee204ed13a8a7486149f494/refs.c#L36-100
+
+	char *current;
+	int segment_len, segments_count = 0, error = -1;
+	unsigned int process_flags;
+	bool normalize = (buf != NULL);
+	assert(name);
+
+	process_flags = flags;
+	current = (char *)name;
+
+	if (normalize)
+		git_buf_clear(buf);
+
+	while (true) {
+		segment_len = ensure_segment_validity(current);
+		if (segment_len < 0) {
+			if ((process_flags & GIT_REF_FORMAT_REFSPEC_PATTERN) &&
+					current[0] == '*' &&
+					(current[1] == '\0' || current[1] == '/')) {
+				/* Accept one wildcard as a full refname component. */
+				process_flags &= ~GIT_REF_FORMAT_REFSPEC_PATTERN;
+				segment_len = 1;
+			} else
+				goto cleanup;
+		}
+
+		if (segment_len > 0) {
+			if (normalize) {
+				size_t cur_len = git_buf_len(buf);
+
+				git_buf_joinpath(buf, git_buf_cstr(buf), current);
+				git_buf_truncate(buf,
+					cur_len + segment_len + (segments_count ? 1 : 0));
+
+				if (git_buf_oom(buf))
+					goto cleanup;
+			}
+
+			segments_count++;
+		}
+
+		if (current[segment_len] == '\0')
+			break;
+
+		current += segment_len + 1;
+	}
+
+	/* A refname can not be empty */
+	if (segment_len == 0 && segments_count == 0)
+		goto cleanup;
+
+	/* A refname can not end with "." */
+	if (current[segment_len - 1] == '.')
+		goto cleanup;
+
+	/* A refname can not end with "/" */
+	if (current[segment_len - 1] == '/')
+		goto cleanup;
+
+	/* A refname can not end with ".lock" */
+	if (!git__suffixcmp(name, GIT_FILELOCK_EXTENSION))
+		goto cleanup;
+
+	if ((segments_count == 1 ) && !(flags & GIT_REF_FORMAT_ALLOW_ONELEVEL))
+		goto cleanup;
+
+	if ((segments_count == 1 ) &&
+		!(is_all_caps_and_underscore(name, (size_t)segment_len) ||
+			((flags & GIT_REF_FORMAT_REFSPEC_PATTERN) && !strcmp("*", name))))
+			goto cleanup;
+
+	if ((segments_count > 1)
+		&& (is_all_caps_and_underscore(name, strchr(name, '/') - name)))
+			goto cleanup;
+
+	error = 0;
+
+cleanup:
+	if (error)
+		giterr_set(
+			GITERR_REFERENCE,
+			"The given reference name '%s' is not valid", name);
+
+	return error;
+}
+
 int git_reference_normalize_name(
 	char *buffer_out,
 	size_t buffer_size,
 	const char *name,
 	unsigned int flags)
 {
-	const char *name_end, *buffer_out_start;
-	const char *current;
-	int contains_a_slash = 0;
+	git_buf buf = GIT_BUF_INIT;
+	int error;
 
-	assert(name && buffer_out);
+	if ((error = git_reference__normalize_name(&buf, name, flags)) < 0)
+		goto cleanup;
 
-	if (flags & GIT_REF_FORMAT_REFSPEC_PATTERN) {
-		giterr_set(GITERR_INVALID, "Unimplemented");
-		return -1;
-	}
-
-	buffer_out_start = buffer_out;
-	current = name;
-	name_end = name + strlen(name);
-
-	/* Terminating null byte */
-	buffer_size--;
-
-	/* A refname can not be empty */
-	if (name_end == name)
-		goto invalid_name;
-
-	/* A refname can not end with a dot or a slash */
-	if (*(name_end - 1) == '.' || *(name_end - 1) == '/')
-		goto invalid_name;
-
-	while (current < name_end && buffer_size > 0) {
-		if (!is_valid_ref_char(*current))
-			goto invalid_name;
-
-		if (buffer_out > buffer_out_start) {
-			char prev = *(buffer_out - 1);
-
-			/* A refname can not start with a dot nor contain a double dot */
-			if (*current == '.' && ((prev == '.') || (prev == '/')))
-				goto invalid_name;
-
-			/* '@{' is forbidden within a refname */
-			if (*current == '{' && prev == '@')
-				goto invalid_name;
-
-			/* Prevent multiple slashes from being added to the output */
-			if (*current == '/' && prev == '/') {
-				current++;
-				continue;
-			}
-		}
-
-		if (*current == '/') {
-			if (buffer_out > buffer_out_start)
-				contains_a_slash = 1;
-			else {
-				current++;
-				continue;
-			}
-		}
-
-
-		*buffer_out++ = *current++;
-		buffer_size--;
-	}
-
-	if (current < name_end) {
+	if (git_buf_len(&buf) > buffer_size - 1) {
 		giterr_set(
 		GITERR_REFERENCE,
 		"The provided buffer is too short to hold the normalization of '%s'", name);
-		return GIT_EBUFS;
+		error = GIT_EBUFS;
+		goto cleanup;
 	}
 
-	/* Object id refname have to contain at least one slash, except
-	 * for HEAD in a detached state or MERGE_HEAD if we're in the
-	 * middle of a merge */
-	if (!(flags & GIT_REF_FORMAT_ALLOW_ONELEVEL) &&
-		!contains_a_slash &&
-		strcmp(name, GIT_HEAD_FILE) != 0 &&
-		strcmp(name, GIT_MERGE_HEAD_FILE) != 0 &&
-		strcmp(name, GIT_FETCH_HEAD_FILE) != 0)
-		goto invalid_name;
+	git_buf_copy_cstr(buffer_out, buffer_size, &buf);
 
-	/* A refname can not end with ".lock" */
-	if (!git__suffixcmp(name, GIT_FILELOCK_EXTENSION))
-		goto invalid_name;
+	error = 0;
 
-	*buffer_out = '\0';
-
-	return 0;
-
-invalid_name:
-	giterr_set(
-		GITERR_REFERENCE,
-		"The given reference name '%s' is not valid", name);
-	return -1;
+cleanup:
+	git_buf_free(&buf);
+	return error;
 }
 
-int git_reference__normalize_name(
+int git_reference__normalize_name_lax(
 	char *buffer_out,
 	size_t out_size,
 	const char *name)
@@ -1691,19 +1771,6 @@ int git_reference__normalize_name(
 		name,
 		GIT_REF_FORMAT_ALLOW_ONELEVEL);
 }
-
-int git_reference__normalize_name_oid(
-	char *buffer_out,
-	size_t out_size,
-	const char *name)
-{
-	return git_reference_normalize_name(
-		buffer_out,
-		out_size,
-		name,
-		GIT_REF_FORMAT_NORMAL);
-}
-
 #define GIT_REF_TYPEMASK (GIT_REF_OID | GIT_REF_SYMBOLIC)
 
 int git_reference_cmp(git_reference *ref1, git_reference *ref2)
@@ -1844,4 +1911,67 @@ int git_reference_is_remote(git_reference *ref)
 {
 	assert(ref);
 	return git__prefixcmp(ref->name, GIT_REFS_REMOTES_DIR) == 0;
+}
+
+static int peel_error(int error, git_reference *ref, const char* msg)
+{
+	giterr_set(
+		GITERR_INVALID,
+		"The reference '%s' cannot be peeled - %s", git_reference_name(ref), msg);
+	return error;
+}
+
+static int reference_target(git_object **object, git_reference *ref)
+{
+	const git_oid *oid;
+
+	oid = git_reference_oid(ref);
+
+	return git_object_lookup(object, git_reference_owner(ref), oid, GIT_OBJ_ANY);
+}
+
+int git_reference_peel(
+		git_object **peeled,
+		git_reference *ref,
+		git_otype target_type)
+{
+	git_reference *resolved = NULL;
+	git_object *target = NULL;
+	int error;
+
+	assert(ref);
+
+	if ((error = git_reference_resolve(&resolved, ref)) < 0)
+		return peel_error(error, ref, "Cannot resolve reference");
+
+	if ((error = reference_target(&target, resolved)) < 0) {
+		peel_error(error, ref, "Cannot retrieve reference target");
+		goto cleanup;
+	}
+	
+	if (target_type == GIT_OBJ_ANY && git_object_type(target) != GIT_OBJ_TAG)
+		error = git_object__dup(peeled, target);
+	else 
+		error = git_object_peel(peeled, target, target_type);
+
+cleanup:
+	git_object_free(target);
+	git_reference_free(resolved);
+	return error;
+}
+
+int git_reference__is_valid_name(
+	const char *refname,
+	unsigned int flags)
+{
+	giterr_clear();
+	return git_reference__normalize_name(NULL, refname, flags) == 0;
+}
+
+int git_reference_is_valid_name(
+	const char *refname)
+{
+	return git_reference__is_valid_name(
+		refname,
+		GIT_REF_FORMAT_ALLOW_ONELEVEL);
 }

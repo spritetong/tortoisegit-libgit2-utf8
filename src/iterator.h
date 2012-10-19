@@ -9,6 +9,12 @@
 
 #include "common.h"
 #include "git2/index.h"
+#include "vector.h"
+#include "buffer.h"
+
+#define ITERATOR_PREFIXCMP(ITER, STR, PREFIX)	(((ITER).ignore_case) ? \
+	git__prefixcmp_icase((STR), (PREFIX)) : \
+	git__prefixcmp((STR), (PREFIX)))
 
 typedef struct git_iterator git_iterator;
 
@@ -16,7 +22,8 @@ typedef enum {
 	GIT_ITERATOR_EMPTY = 0,
 	GIT_ITERATOR_TREE = 1,
 	GIT_ITERATOR_INDEX = 2,
-	GIT_ITERATOR_WORKDIR = 3
+	GIT_ITERATOR_WORKDIR = 3,
+	GIT_ITERATOR_SPOOLANDSORT = 4
 } git_iterator_type_t;
 
 struct git_iterator {
@@ -29,6 +36,7 @@ struct git_iterator {
 	int (*seek)(git_iterator *, const char *prefix);
 	int (*reset)(git_iterator *);
 	void (*free)(git_iterator *);
+	unsigned int ignore_case:1;
 };
 
 extern int git_iterator_for_nothing(git_iterator **iter);
@@ -63,6 +71,17 @@ GIT_INLINE(int) git_iterator_for_workdir(
 	return git_iterator_for_workdir_range(iter, repo, NULL, NULL);
 }
 
+extern int git_iterator_spoolandsort_range(
+	git_iterator **iter, git_iterator *towrap,
+	git_vector_cmp comparer, bool ignore_case,
+	const char *start, const char *end);
+
+GIT_INLINE(int) git_iterator_spoolandsort(
+	git_iterator **iter, git_iterator *towrap,
+	git_vector_cmp comparer, bool ignore_case)
+{
+	return git_iterator_spoolandsort_range(iter, towrap, comparer, ignore_case, NULL, NULL);
+}
 
 /* Entry is not guaranteed to be fully populated.  For a tree iterator,
  * we will only populate the mode, oid and path, for example.  For a workdir
@@ -123,6 +142,9 @@ GIT_INLINE(git_iterator_type_t) git_iterator_type(git_iterator *iter)
 extern int git_iterator_current_tree_entry(
 	git_iterator *iter, const git_tree_entry **tree_entry);
 
+extern int git_iterator_current_parent_tree(
+	git_iterator *iter, const char *parent_path, const git_tree **tree_ptr);
+
 extern int git_iterator_current_is_ignored(git_iterator *iter);
 
 /**
@@ -147,5 +169,12 @@ extern int git_iterator_advance_into_directory(
 
 extern int git_iterator_cmp(
 	git_iterator *iter, const char *path_prefix);
+
+/**
+ * Get the full path of the current item from a workdir iterator.
+ * This will return NULL for a non-workdir iterator.
+ */
+extern int git_iterator_current_workdir_path(
+	git_iterator *iter, git_buf **path);
 
 #endif

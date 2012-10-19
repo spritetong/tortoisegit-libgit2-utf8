@@ -221,6 +221,7 @@ static int file_foreach(
 
 			/* abort iterator on non-zero return value */
 			if (fn(key, var->value, data)) {
+				giterr_clear();
 				result = GIT_EUSER;
 				goto cleanup;
 			}
@@ -819,7 +820,7 @@ fail_parse:
 
 static int skip_bom(diskfile_backend *cfg)
 {
-	static const char utf8_bom[] = "\xef\xbb\xbf";
+	static const char utf8_bom[] = { '\xef', '\xbb', '\xbf' };
 
 	if (cfg->reader.buffer.size < sizeof(utf8_bom))
 		return 0;

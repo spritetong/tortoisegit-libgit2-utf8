@@ -28,11 +28,11 @@ static int disambiguate_refname(git_reference **out, git_repository *repo, const
 
 	static const char* formatters[] = {
 		"%s",
-		"refs/%s",
-		"refs/tags/%s",
-		"refs/heads/%s",
-		"refs/remotes/%s",
-		"refs/remotes/%s/HEAD",
+		GIT_REFS_DIR "%s",
+		GIT_REFS_TAGS_DIR "%s",
+		GIT_REFS_HEADS_DIR "%s",
+		GIT_REFS_REMOTES_DIR "%s",
+		GIT_REFS_REMOTES_DIR "%s/" GIT_HEAD_FILE,
 		NULL
 	};
 
@@ -49,6 +49,11 @@ static int disambiguate_refname(git_reference **out, git_repository *repo, const
 
 		if ((error = git_buf_printf(&refnamebuf, formatters[i], git_buf_cstr(&name))) < 0)
 			goto cleanup;
+
+		if (!git_reference_is_valid_name(git_buf_cstr(&refnamebuf))) {
+			error = GIT_ENOTFOUND;
+			continue;
+		}
 
 		error = git_reference_lookup_resolved(&ref, repo, git_buf_cstr(&refnamebuf), -1);
 
@@ -493,7 +498,7 @@ static int walk_and_search(git_object **out, git_revwalk *walk, regex_t *regex)
 		git_object_free(obj);
 	}
 
-	if (error < 0 && error == GIT_REVWALKOVER)
+	if (error < 0 && error == GIT_ITEROVER)
 		error = GIT_ENOTFOUND;
 
 	return error;
@@ -515,7 +520,7 @@ static int handle_grep_syntax(git_object **out, git_repository *repo, const git_
 
 	if (spec_oid == NULL) {
 		// TODO: @carlosmn: The glob should be refs/* but this makes git_revwalk_next() fails
-		if (git_revwalk_push_glob(walk, "refs/heads/*") < 0)
+		if (git_revwalk_push_glob(walk, GIT_REFS_HEADS_DIR "*") < 0)
 			goto cleanup;
 	} else if (git_revwalk_push(walk, spec_oid) < 0)
 			goto cleanup;
@@ -790,20 +795,24 @@ int git_revparse_single(git_object **out, git_repository *repo, const char *spec
 
 		case '@':
 		{
-			git_object *temp_object = NULL;
+			if (spec[pos+1] == '{') {
+				git_object *temp_object = NULL;
 
-			if ((error = extract_curly_braces_content(&buf, spec, &pos)) < 0)
-				goto cleanup;
+				if ((error = extract_curly_braces_content(&buf, spec, &pos)) < 0)
+					goto cleanup;
 
-			if ((error = ensure_base_rev_is_not_known_yet(base_rev, spec)) < 0)
-				goto cleanup;
+				if ((error = ensure_base_rev_is_not_known_yet(base_rev, spec)) < 0)
+					goto cleanup;
 
-			if ((error = handle_at_syntax(&temp_object, &reference, spec, identifier_len, repo, git_buf_cstr(&buf))) < 0)
-				goto cleanup;
+				if ((error = handle_at_syntax(&temp_object, &reference, spec, identifier_len, repo, git_buf_cstr(&buf))) < 0)
+					goto cleanup;
 
-			if (temp_object != NULL)
-				base_rev = temp_object;
-			break;
+				if (temp_object != NULL)
+					base_rev = temp_object;
+				break;
+			} else {
+				/* Fall through */
+			}
 		}
 
 		default:

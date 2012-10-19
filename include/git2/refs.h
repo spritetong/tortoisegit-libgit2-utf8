@@ -10,6 +10,7 @@
 #include "common.h"
 #include "types.h"
 #include "oid.h"
+#include "strarray.h"
 
 /**
  * @file git2/refs.h
@@ -392,7 +393,8 @@ enum {
 	/**
 	 * Control whether one-level refnames are accepted
 	 * (i.e., refnames that do not contain multiple /-separated
-	 * components)
+	 * components). Those are expected to be written only using
+	 * uppercase letters and underscore (FETCH_HEAD, ...)
 	 */
 	GIT_REF_FORMAT_ALLOW_ONELEVEL = (1 << 0),
 
@@ -414,8 +416,6 @@ enum {
  * Once normalized, if the reference name is valid, it will be
  * returned in the user allocated buffer.
  *
- * TODO: Implement handling of GIT_REF_FORMAT_REFSPEC_PATTERN
- *
  * @param buffer_out The user allocated buffer where the
  * normalized name will be stored.
  *
@@ -433,6 +433,36 @@ GIT_EXTERN(int) git_reference_normalize_name(
 	size_t buffer_size,
 	const char *name,
 	unsigned int flags);
+
+/**
+ * Recursively peel an reference until an object of the
+ * specified type is met.
+ *
+ * The retrieved `peeled` object is owned by the repository
+ * and should be closed with the `git_object_free` method.
+ *
+ * If you pass `GIT_OBJ_ANY` as the target type, then the object
+ * will be peeled until a non-tag object is met.
+ *
+ * @param peeled Pointer to the peeled git_object
+ * @param ref The reference to be processed
+ * @param target_type The type of the requested object
+ * @return 0 or an error code
+ */
+GIT_EXTERN(int) git_reference_peel(
+	git_object **out,
+	git_reference *ref,
+	git_otype type);
+
+/**
+ * Ensure the reference name is well-formed.
+ *
+ * @param refname name to be checked.
+ *
+ * @return 1 if the reference name is acceptable; 0 if it isn't
+ */
+GIT_EXTERN(int) git_reference_is_valid_name(
+	const char *refname);
 
 /** @} */
 GIT_END_DECL

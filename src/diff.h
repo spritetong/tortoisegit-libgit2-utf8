@@ -7,6 +7,9 @@
 #ifndef INCLUDE_diff_h__
 #define INCLUDE_diff_h__
 
+#include "git2/diff.h"
+#include "git2/oid.h"
+
 #include <stdio.h>
 #include "vector.h"
 #include "buffer.h"
@@ -26,10 +29,11 @@ enum {
 };
 
 struct git_diff_list {
+	git_refcount     rc;
 	git_repository   *repo;
 	git_diff_options opts;
 	git_vector       pathspec;
-	git_vector       deltas;    /* vector of git_diff_file_delta */
+	git_vector       deltas;    /* vector of git_diff_delta */
 	git_pool pool;
 	git_iterator_type_t old_src;
 	git_iterator_type_t new_src;
@@ -38,6 +42,11 @@ struct git_diff_list {
 
 extern void git_diff__cleanup_modes(
 	uint32_t diffcaps, uint32_t *omode, uint32_t *nmode);
+
+extern void git_diff_list_addref(git_diff_list *diff);
+
+extern bool git_diff_delta__should_skip(
+	const git_diff_options *opts, const git_diff_delta *delta);
 
 #endif
 

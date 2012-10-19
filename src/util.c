@@ -28,7 +28,7 @@ int git_libgit2_capabilities()
 #ifdef GIT_THREADS
 		| GIT_CAP_THREADS
 #endif
-#ifdef GIT_SSL
+#if defined(GIT_SSL) || defined(GIT_WINHTTP)
 		| GIT_CAP_HTTPS
 #endif
 	;
@@ -197,6 +197,11 @@ int git__prefixcmp(const char *str, const char *prefix)
 		if ((s = *(str++)) != p)
 			return s - p;
 	}
+}
+
+int git__prefixcmp_icase(const char *str, const char *prefix)
+{
+	return strncasecmp(str, prefix, strlen(prefix));
 }
 
 int git__suffixcmp(const char *str, const char *suffix)

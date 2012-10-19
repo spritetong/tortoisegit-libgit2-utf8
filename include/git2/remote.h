@@ -12,6 +12,7 @@
 #include "refspec.h"
 #include "net.h"
 #include "indexer.h"
+#include "strarray.h"
 
 /**
  * @file git2/remote.h
@@ -198,6 +199,14 @@ GIT_EXTERN(int) git_remote_download(git_remote *remote, git_off_t *bytes, git_in
 GIT_EXTERN(int) git_remote_connected(git_remote *remote);
 
 /**
+ * Cancel the operation
+ *
+ * At certain points in its operation, the network code checks whether
+ * the operation has been cancelled and if so stops the operation.
+ */
+GIT_EXTERN(void) git_remote_stop(git_remote *remote);
+
+/**
  * Disconnect from the remote
  *
  * Close the connection to the remote and free the underlying
@@ -303,6 +312,30 @@ struct git_remote_callbacks {
  * @param callbacks a pointer to the user's callback settings
  */
 GIT_EXTERN(void) git_remote_set_callbacks(git_remote *remote, git_remote_callbacks *callbacks);
+
+enum {
+	GIT_REMOTE_DOWNLOAD_TAGS_UNSET,
+	GIT_REMOTE_DOWNLOAD_TAGS_NONE,
+	GIT_REMOTE_DOWNLOAD_TAGS_AUTO,
+	GIT_REMOTE_DOWNLOAD_TAGS_ALL
+};
+
+/**
+ * Retrieve the tag auto-follow setting
+ *
+ * @param remote the remote to query
+ * @return the auto-follow setting
+ */
+GIT_EXTERN(int) git_remote_autotag(git_remote *remote);
+
+/**
+ * Set the tag auto-follow setting
+ *
+ * @param remote the remote to configure
+ * @param value a GIT_REMOTE_DOWNLOAD_TAGS value
+ */
+GIT_EXTERN(void) git_remote_set_autotag(git_remote *remote, int value);
+
 
 /** @} */
 GIT_END_DECL

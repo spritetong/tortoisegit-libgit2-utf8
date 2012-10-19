@@ -8,6 +8,7 @@
 #define INCLUDE_buffer_h__
 
 #include "common.h"
+#include "git2/strarray.h"
 #include <stdarg.h>
 
 typedef struct {
@@ -153,5 +154,8 @@ bool git_buf_is_binary(const git_buf *buf);
 
 /* Unescape all characters in a buffer */
 void git_buf_unescape(git_buf *buf);
+
+/* Write data as base64 encoded in buffer */
+int git_buf_put_base64(git_buf *buf, const char *data, size_t len);
 
 #endif

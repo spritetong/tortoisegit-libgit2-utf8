@@ -8,7 +8,6 @@
 #define INCLUDE_posix__w32_h__
 
 #include "common.h"
-#include "compat/fnmatch.h"
 #include "utf-conv.h"
 
 /* For UTF-8. Fix C++ compilation bugs. Changed by Sprite Tong, 5/22/2012. */

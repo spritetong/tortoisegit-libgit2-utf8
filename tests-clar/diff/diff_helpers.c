@@ -23,17 +23,20 @@ git_tree *resolve_commit_oid_to_tree(
 
 int diff_file_fn(
 	void *cb_data,
-	git_diff_delta *delta,
+	const git_diff_delta *delta,
 	float progress)
 {
 	diff_expects *e = cb_data;
 
 	GIT_UNUSED(progress);
 
-	if (delta->binary)
-		e->at_least_one_of_them_is_binary = true;
-
 	e->files++;
+
+	if (delta->binary) {
+		e->at_least_one_of_them_is_binary = true;
+		e->files_binary++;
+	}
+
 	switch (delta->status) {
 	case GIT_DELTA_ADDED: e->file_adds++; break;
 	case GIT_DELTA_DELETED: e->file_dels++; break;
@@ -48,8 +51,8 @@ int diff_file_fn(
 
 int diff_hunk_fn(
 	void *cb_data,
-	git_diff_delta *delta,
-	git_diff_range *range,
+	const git_diff_delta *delta,
+	const git_diff_range *range,
 	const char *header,
 	size_t header_len)
 {
@@ -67,8 +70,8 @@ int diff_hunk_fn(
 
 int diff_line_fn(
 	void *cb_data,
-	git_diff_delta *delta,
-	git_diff_range *range,
+	const git_diff_delta *delta,
+	const git_diff_range *range,
 	char line_origin,
 	const char *content,
 	size_t content_len)
@@ -89,7 +92,8 @@ int diff_line_fn(
 		e->line_adds++;
 		break;
 	case GIT_DIFF_LINE_ADD_EOFNL:
-		assert(0);
+		/* technically not a line add, but we'll count it as such */
+		e->line_adds++;
 		break;
 	case GIT_DIFF_LINE_DELETION:
 		e->line_dels++;
@@ -102,4 +106,102 @@ int diff_line_fn(
 		break;
 	}
 	return 0;
+}
+
+int diff_foreach_via_iterator(
+	git_diff_list *diff,
+	void *data,
+	git_diff_file_fn file_cb,
+	git_diff_hunk_fn hunk_cb,
+	git_diff_data_fn line_cb)
+{
+	size_t d, num_d = git_diff_num_deltas(diff);
+
+	for (d = 0; d < num_d; ++d) {
+		git_diff_patch *patch;
+		const git_diff_delta *delta;
+		size_t h, num_h;
+
+		cl_git_pass(git_diff_get_patch(&patch, &delta, diff, d));
+		cl_assert(delta);
+
+		/* call file_cb for this file */
+		if (file_cb != NULL && file_cb(data, delta, (float)d / num_d) != 0) {
+			git_diff_patch_free(patch);
+			goto abort;
+		}
+
+		/* if there are no changes, then the patch will be NULL */
+		if (!patch) {
+			cl_assert(delta->status == GIT_DELTA_UNMODIFIED || delta->binary == 1);
+			continue;
+		}
+
+		if (!hunk_cb && !line_cb) {
+			git_diff_patch_free(patch);
+			continue;
+		}
+
+		num_h = git_diff_patch_num_hunks(patch);
+
+		for (h = 0; h < num_h; h++) {
+			const git_diff_range *range;
+			const char *hdr;
+			size_t hdr_len, l, num_l;
+
+			cl_git_pass(git_diff_patch_get_hunk(
+				&range, &hdr, &hdr_len, &num_l, patch, h));
+
+			if (hunk_cb && hunk_cb(data, delta, range, hdr, hdr_len) != 0) {
+				git_diff_patch_free(patch);
+				goto abort;
+			}
+
+			for (l = 0; l < num_l; ++l) {
+				char origin;
+				const char *line;
+				size_t line_len;
+				int old_lineno, new_lineno;
+
+				cl_git_pass(git_diff_patch_get_line_in_hunk(
+					&origin, &line, &line_len, &old_lineno, &new_lineno,
+					patch, h, l));
+
+				if (line_cb(data, delta, range, origin, line, line_len) != 0) {
+					git_diff_patch_free(patch);
+					goto abort;
+				}
+			}
+		}
+
+		git_diff_patch_free(patch);
+	}
+
+	return 0;
+
+abort:
+	giterr_clear();
+	return GIT_EUSER;
+}
+
+static int diff_print_cb(
+	void *cb_data,
+	const git_diff_delta *delta,
+	const git_diff_range *range,
+	char line_origin, /**< GIT_DIFF_LINE_... value from above */
+	const char *content,
+	size_t content_len)
+{
+	GIT_UNUSED(cb_data);
+	GIT_UNUSED(delta);
+	GIT_UNUSED(range);
+	GIT_UNUSED(line_origin);
+	GIT_UNUSED(content_len);
+	fputs(content, (FILE *)cb_data);
+	return 0;
+}
+
+void diff_print(FILE *fp, git_diff_list *diff)
+{
+	cl_git_pass(git_diff_print_patch(diff, fp ? fp : stderr, diff_print_cb));
 }

@@ -456,7 +456,7 @@ GIT_EXTERN(int) git_repository_index(git_index **out, git_repository *repo);
 GIT_EXTERN(void) git_repository_set_index(git_repository *repo, git_index *index);
 
 /**
- * Retrive git's prepared message
+ * Retrieve git's prepared message
  *
  * Operations such as git revert/cherry-pick/merge with the -n option
  * stop just short of creating a commit with the changes and save
@@ -481,6 +481,91 @@ GIT_EXTERN(int) git_repository_message(char *buffer, size_t len, git_repository 
  */
 GIT_EXTERN(int) git_repository_message_remove(git_repository *repo);
 
+/**
+ * Calculate hash of file using repository filtering rules.
+ *
+ * If you simply want to calculate the hash of a file on disk with no filters,
+ * you can just use the `git_odb_hashfile()` API.  However, if you want to
+ * hash a file in the repository and you want to apply filtering rules (e.g.
+ * crlf filters) before generating the SHA, then use this function.
+ *
+ * @param out Output value of calculated SHA
+ * @param repo Repository pointer
+ * @param path Path to file on disk whose contents should be hashed. If the
+ *             repository is not NULL, this can be a relative path.
+ * @param type The object type to hash as (e.g. GIT_OBJ_BLOB)
+ * @param as_path The path to use to look up filtering rules. If this is
+ *             NULL, then the `path` parameter will be used instead. If
+ *             this is passed as the empty string, then no filters will be
+ *             applied when calculating the hash.
+ */
+GIT_EXTERN(int) git_repository_hashfile(
+    git_oid *out,
+    git_repository *repo,
+    const char *path,
+    git_otype type,
+    const char *as_path);
+
+/**
+ * Make the repository HEAD point to the specified reference.
+ *
+ * If the provided reference points to a Tree or a Blob, the HEAD is
+ * unaltered and -1 is returned.
+ *
+ * If the provided reference points to a branch, the HEAD will point
+ * to that branch, staying attached, or become attached if it isn't yet.
+ * If the branch doesn't exist yet, no error will be return. The HEAD
+ * will then be attached to an unborn branch.
+ *
+ * Otherwise, the HEAD will be detached and will directly point to
+ * the Commit.
+ *
+ * @param repo Repository pointer
+ * @param refname Canonical name of the reference the HEAD should point at
+ * @return 0 on success, or an error code
+ */
+GIT_EXTERN(int) git_repository_set_head(
+	git_repository* repo,
+	const char* refname);
+
+/**
+ * Make the repository HEAD directly point to the Commit.
+ *
+ * If the provided committish cannot be found in the repository, the HEAD
+ * is unaltered and GIT_ENOTFOUND is returned.
+ *
+ * If the provided commitish cannot be peeled into a commit, the HEAD
+ * is unaltered and -1 is returned.
+ *
+ * Otherwise, the HEAD will eventually be detached and will directly point to
+ * the peeled Commit.
+ *
+ * @param repo Repository pointer
+ * @param commitish Object id of the Commit the HEAD should point to
+ * @return 0 on success, or an error code
+ */
+GIT_EXTERN(int) git_repository_set_head_detached(
+	git_repository* repo,
+	const git_oid* commitish);
+
+/**
+ * Detach the HEAD.
+ *
+ * If the HEAD is already detached and points to a Commit, 0 is returned.
+ *
+ * If the HEAD is already detached and points to a Tag, the HEAD is
+ * updated into making it point to the peeled Commit, and 0 is returned.
+ *
+ * If the HEAD is already detached and points to a non commitish, the HEAD is 
+ * unaletered, and -1 is returned.
+ *
+ * Otherwise, the HEAD will be detached and point to the peeled Commit.
+ *
+ * @param repo Repository pointer
+ * @return 0 on success, or an error code
+ */
+GIT_EXTERN(int) git_repository_detach_head(
+	git_repository* repo);
 
 /** @} */
 GIT_END_DECL

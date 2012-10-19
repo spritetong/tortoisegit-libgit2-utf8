@@ -25,7 +25,6 @@ static unsigned int index_delta2status(git_delta_t index_status)
 	switch (index_status) {
 	case GIT_DELTA_ADDED:
 	case GIT_DELTA_COPIED:
-	case GIT_DELTA_RENAMED:
 		st = GIT_STATUS_INDEX_NEW;
 		break;
 	case GIT_DELTA_DELETED:
@@ -33,6 +32,12 @@ static unsigned int index_delta2status(git_delta_t index_status)
 		break;
 	case GIT_DELTA_MODIFIED:
 		st = GIT_STATUS_INDEX_MODIFIED;
+		break;
+	case GIT_DELTA_RENAMED:
+		st = GIT_STATUS_INDEX_RENAMED;
+		break;
+	case GIT_DELTA_TYPECHANGE:
+		st = GIT_STATUS_INDEX_TYPECHANGE;
 		break;
 	default:
 		break;
@@ -47,8 +52,8 @@ static unsigned int workdir_delta2status(git_delta_t workdir_status)
 
 	switch (workdir_status) {
 	case GIT_DELTA_ADDED:
-	case GIT_DELTA_COPIED:
 	case GIT_DELTA_RENAMED:
+	case GIT_DELTA_COPIED:
 	case GIT_DELTA_UNTRACKED:
 		st = GIT_STATUS_WT_NEW;
 		break;
@@ -60,6 +65,9 @@ static unsigned int workdir_delta2status(git_delta_t workdir_status)
 		break;
 	case GIT_DELTA_IGNORED:
 		st = GIT_STATUS_IGNORED;
+		break;
+	case GIT_DELTA_TYPECHANGE:
+		st = GIT_STATUS_WT_TYPECHANGE;
 		break;
 	default:
 		break;
@@ -82,14 +90,21 @@ int git_status_foreach_ext(
 		opts ? opts->show : GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
 	git_diff_delta *i2h, *w2i;
 	size_t i, j, i_max, j_max;
+	bool ignore_case = false;
 
 	assert(show <= GIT_STATUS_SHOW_INDEX_THEN_WORKDIR);
+
+	if (show != GIT_STATUS_SHOW_INDEX_ONLY &&
+		(err = git_repository__ensure_not_bare(repo, "status")) < 0)
+		return err;
 
 	if ((err = git_repository_head_tree(&head, repo)) < 0)
 		return err;
 
 	memset(&diffopt, 0, sizeof(diffopt));
 	memcpy(&diffopt.pathspec, &opts->pathspec, sizeof(diffopt.pathspec));
+
+	diffopt.flags = GIT_DIFF_INCLUDE_TYPECHANGE;
 
 	if ((opts->flags & GIT_STATUS_OPT_INCLUDE_UNTRACKED) != 0)
 		diffopt.flags = diffopt.flags | GIT_DIFF_INCLUDE_UNTRACKED;
@@ -124,11 +139,26 @@ int git_status_foreach_ext(
 	i_max = idx2head ? idx2head->deltas.length : 0;
 	j_max = wd2idx   ? wd2idx->deltas.length   : 0;
 
+	if (idx2head && wd2idx &&
+		(0 != (idx2head->opts.flags & GIT_DIFF_DELTAS_ARE_ICASE) ||
+		 0 != (wd2idx->opts.flags & GIT_DIFF_DELTAS_ARE_ICASE)))
+	{
+		/* Then use the ignore-case sorter... */
+		ignore_case = true;
+
+		/* and assert that both are ignore-case sorted. If this function
+		 * ever needs to support merge joining result sets that are not sorted
+		 * by the same function, then it will need to be extended to do a spool
+		 * and sort on one of the results before merge joining */
+		assert(0 != (idx2head->opts.flags & GIT_DIFF_DELTAS_ARE_ICASE) &&
+			0 != (wd2idx->opts.flags & GIT_DIFF_DELTAS_ARE_ICASE));
+	}
+
 	for (i = 0, j = 0; !err && (i < i_max || j < j_max); ) {
 		i2h = idx2head ? GIT_VECTOR_GET(&idx2head->deltas,i) : NULL;
 		w2i = wd2idx   ? GIT_VECTOR_GET(&wd2idx->deltas,j)   : NULL;
 
-		cmp = !w2i ? -1 : !i2h ? 1 : strcmp(i2h->old_file.path, w2i->old_file.path);
+		cmp = !w2i ? -1 : !i2h ? 1 : STRCMP_CASESELECT(ignore_case, i2h->old_file.path, w2i->old_file.path);
 
 		if (cmp < 0) {
 			if (cb(i2h->old_file.path, index_delta2status(i2h->status), cbdata))
@@ -150,6 +180,9 @@ cleanup:
 	git_tree_free(head);
 	git_diff_list_free(idx2head);
 	git_diff_list_free(wd2idx);
+
+	if (err == GIT_EUSER)
+		giterr_clear();
 
 	return err;
 }
@@ -226,9 +259,22 @@ int git_status_file(
 		error = GIT_EAMBIGUOUS;
 
 	if (!error && !sfi.count) {
-		giterr_set(GITERR_INVALID,
-			"Attempt to get status of nonexistent file '%s'", path);
-		error = GIT_ENOTFOUND;
+		git_buf full = GIT_BUF_INIT;
+
+		/* if the file actually exists and we still did not get a callback
+		 * for it, then it must be contained inside an ignored directory, so
+		 * mark it as such instead of generating an error.
+		 */
+		if (!git_buf_joinpath(&full, git_repository_workdir(repo), path) &&
+			git_path_exists(full.ptr))
+			sfi.status = GIT_STATUS_IGNORED;
+		else {
+			giterr_set(GITERR_INVALID,
+				"Attempt to get status of nonexistent file '%s'", path);
+			error = GIT_ENOTFOUND;
+		}
+
+		git_buf_free(&full);
 	}
 
 	*status_flags = sfi.status;

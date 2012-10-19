@@ -23,6 +23,7 @@
 #define GIT_ATTR_FNMATCH_IGNORE		(1U << 4)
 #define GIT_ATTR_FNMATCH_HASWILD	(1U << 5)
 #define GIT_ATTR_FNMATCH_ALLOWSPACE	(1U << 6)
+#define GIT_ATTR_FNMATCH_ICASE		(1U << 7)
 
 extern const char *git_attr__true;
 extern const char *git_attr__false;
@@ -70,10 +71,10 @@ typedef struct {
 } git_attr_file;
 
 typedef struct {
-	git_buf     full;
-	const char *path;
-	const char *basename;
-	int         is_dir;
+	git_buf  full;
+	char    *path;
+	char    *basename;
+	int      is_dir;
 } git_attr_path;
 
 typedef enum {
@@ -96,7 +97,7 @@ extern void git_attr_file__free(git_attr_file *file);
 extern void git_attr_file__clear_rules(git_attr_file *file);
 
 extern int git_attr_file__parse_buffer(
-	git_repository *repo, const char *buf, git_attr_file *file);
+	git_repository *repo, void *parsedata, const char *buf, git_attr_file *file);
 
 extern int git_attr_file__lookup_one(
 	git_attr_file *file,

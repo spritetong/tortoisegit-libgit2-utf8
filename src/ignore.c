@@ -1,20 +1,37 @@
 #include "git2/ignore.h"
 #include "ignore.h"
 #include "path.h"
+#include "config.h"
 
 #define GIT_IGNORE_INTERNAL		"[internal]exclude"
 #define GIT_IGNORE_FILE_INREPO	"info/exclude"
 #define GIT_IGNORE_FILE			".gitignore"
 
 static int parse_ignore_file(
-	git_repository *repo, const char *buffer, git_attr_file *ignores)
+	git_repository *repo, void *parsedata, const char *buffer, git_attr_file *ignores)
 {
 	int error = 0;
 	git_attr_fnmatch *match = NULL;
 	const char *scan = NULL;
 	char *context = NULL;
+	bool ignore_case = false;
+	git_config *cfg = NULL;
+	int val;
 
-	GIT_UNUSED(repo);
+	/* Prefer to have the caller pass in a git_ignores as the parsedata object.
+	 * If they did not, then we can (much more slowly) find the value of
+	 * ignore_case by using the repository object. */
+	if (parsedata != NULL) {
+		ignore_case = ((git_ignores *)parsedata)->ignore_case;
+	} else {
+		if ((error = git_repository_config(&cfg, repo)) < 0)
+			return error;
+
+		if (git_config_get_bool(&val, cfg, "core.ignorecase") == 0)
+			ignore_case = (val != 0);
+
+		git_config_free(cfg);
+	}
 
 	if (ignores->key && git__suffixcmp(ignores->key, "/" GIT_IGNORE_FILE) == 0) {
 		context = ignores->key + 2;
@@ -34,7 +51,11 @@ static int parse_ignore_file(
 		if (!(error = git_attr_fnmatch__parse(
 			match, ignores->pool, context, &scan)))
 		{
-			match->flags = match->flags | GIT_ATTR_FNMATCH_IGNORE;
+			match->flags |= GIT_ATTR_FNMATCH_IGNORE;
+
+			if (ignore_case)
+				match->flags |= GIT_ATTR_FNMATCH_ICASE;
+
 			scan = git__next_line(scan);
 			error = git_vector_insert(&ignores->rules, match);
 		}
@@ -58,13 +79,13 @@ static int parse_ignore_file(
 	return error;
 }
 
-#define push_ignore_file(R,S,B,F) \
-	git_attr_cache__push_file((R),(B),(F),GIT_ATTR_FILE_FROM_FILE,parse_ignore_file,(S))
+#define push_ignore_file(R,IGN,S,B,F) \
+	git_attr_cache__push_file((R),(B),(F),GIT_ATTR_FILE_FROM_FILE,parse_ignore_file,(IGN),(S))
 
 static int push_one_ignore(void *ref, git_buf *path)
 {
 	git_ignores *ign = (git_ignores *)ref;
-	return push_ignore_file(ign->repo, &ign->ign_path, path->ptr, GIT_IGNORE_FILE);
+	return push_ignore_file(ign->repo, ign, &ign->ign_path, path->ptr, GIT_IGNORE_FILE);
 }
 
 int git_ignore__for_path(
@@ -74,12 +95,25 @@ int git_ignore__for_path(
 {
 	int error = 0;
 	const char *workdir = git_repository_workdir(repo);
+	git_config *cfg = NULL;
+	int val;
 
 	assert(ignores);
 
 	ignores->repo = repo;
 	git_buf_init(&ignores->dir, 0);
 	ignores->ign_internal = NULL;
+
+	/* Set the ignore_case flag appropriately */
+	if ((error = git_repository_config(&cfg, repo)) < 0)
+		goto cleanup;
+
+	if (git_config_get_bool(&val, cfg, "core.ignorecase") == 0)
+		ignores->ignore_case = (val != 0);
+	else
+		ignores->ignore_case = 0;
+
+	git_config_free(cfg);
 
 	if ((error = git_vector_init(&ignores->ign_path, 8, NULL)) < 0 ||
 		(error = git_vector_init(&ignores->ign_global, 2, NULL)) < 0 ||
@@ -109,14 +143,14 @@ int git_ignore__for_path(
 	}
 
 	/* load .git/info/exclude */
-	error = push_ignore_file(repo, &ignores->ign_global,
+	error = push_ignore_file(repo, ignores, &ignores->ign_global,
 		git_repository_path(repo), GIT_IGNORE_FILE_INREPO);
 	if (error < 0)
 		goto cleanup;
 
 	/* load core.excludesfile */
 	if (git_repository_attr_cache(repo)->cfg_excl_file != NULL)
-		error = push_ignore_file(repo, &ignores->ign_global, NULL,
+		error = push_ignore_file(repo, ignores, &ignores->ign_global, NULL,
 			git_repository_attr_cache(repo)->cfg_excl_file);
 
 cleanup:
@@ -132,7 +166,7 @@ int git_ignore__push_dir(git_ignores *ign, const char *dir)
 		return -1;
 	else
 		return push_ignore_file(
-			ign->repo, &ign->ign_path, ign->dir.ptr, GIT_IGNORE_FILE);
+			ign->repo, ign, &ign->ign_path, ign->dir.ptr, GIT_IGNORE_FILE);
 }
 
 int git_ignore__pop_dir(git_ignores *ign)
@@ -223,7 +257,7 @@ int git_ignore_add_rule(
 	git_attr_file *ign_internal;
 
 	if (!(error = get_internal_ignores(&ign_internal, repo)))
-		error = parse_ignore_file(repo, rules, ign_internal);
+		error = parse_ignore_file(repo, NULL, rules, ign_internal);
 
 	return error;
 }
@@ -243,15 +277,76 @@ int git_ignore_clear_internal_rules(
 int git_ignore_path_is_ignored(
 	int *ignored,
 	git_repository *repo,
-	const char *path)
+	const char *pathname)
 {
 	int error;
+	const char *workdir;
+	git_attr_path path;
+	char *tail, *end;
+	bool full_is_dir;
 	git_ignores ignores;
+	unsigned int i;
+	git_attr_file *file;
 
-	if (git_ignore__for_path(repo, path, &ignores) < 0)
-		return -1;
+	assert(ignored && pathname);
 
-	error = git_ignore__lookup(&ignores, path, ignored);
+	workdir = repo ? git_repository_workdir(repo) : NULL;
+
+	if ((error = git_attr_path__init(&path, pathname, workdir)) < 0)
+		return error;
+
+	tail = path.path;
+	end  = &path.full.ptr[path.full.size];
+	full_is_dir = path.is_dir;
+
+	while (1) {
+		/* advance to next component of path */
+		path.basename = tail;
+
+		while (tail < end && *tail != '/') tail++;
+		*tail = '\0';
+
+		path.full.size = (tail - path.full.ptr);
+		path.is_dir = (tail == end) ? full_is_dir : true;
+
+		/* update ignores for new path fragment */
+		if (path.basename == path.path)
+			error = git_ignore__for_path(repo, path.path, &ignores);
+		else
+			error = git_ignore__push_dir(&ignores, path.basename);
+		if (error < 0)
+			break;
+
+		/* first process builtins - success means path was found */
+		if (ignore_lookup_in_rules(
+				&ignores.ign_internal->rules, &path, ignored))
+			goto cleanup;
+
+		/* next process files in the path */
+		git_vector_foreach(&ignores.ign_path, i, file) {
+			if (ignore_lookup_in_rules(&file->rules, &path, ignored))
+				goto cleanup;
+		}
+
+		/* last process global ignores */
+		git_vector_foreach(&ignores.ign_global, i, file) {
+			if (ignore_lookup_in_rules(&file->rules, &path, ignored))
+				goto cleanup;
+		}
+
+		/* if we found no rules before reaching the end, we're done */
+		if (tail == end)
+			break;
+
+		/* reinstate divider in path */
+		*tail = '/';
+		while (*tail == '/') tail++;
+	}
+
+	*ignored = 0;
+
+cleanup:
+	git_attr_path__free(&path);
 	git_ignore__free(&ignores);
 	return error;
 }
